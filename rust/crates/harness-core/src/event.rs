@@ -70,6 +70,7 @@ pub struct ModelOutput {
 pub enum TurnState {
     Done,
     Error,
+    Cancelled,
 }
 
 impl TurnState {
@@ -77,6 +78,7 @@ impl TurnState {
         match self {
             TurnState::Done => "done",
             TurnState::Error => "error",
+            TurnState::Cancelled => "cancelled",
         }
     }
 }

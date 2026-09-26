@@ -7,7 +7,10 @@ use anyhow::{Context, Result, anyhow};
 use rusqlite::{Connection, OptionalExtension, params};
 
 /// Applied in order; `PRAGMA user_version` records how many have run. Never edit a shipped one.
-const MIGRATIONS: &[&str] = &[include_str!("../migrations/0001.sql")];
+const MIGRATIONS: &[&str] = &[
+    include_str!("../migrations/0001.sql"),
+    include_str!("../migrations/0002.sql"),
+];
 
 const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 
@@ -190,6 +193,27 @@ impl Store {
         self.conn()?.execute(
             "INSERT INTO event (id, turn_id, thread_id, type, payload_json) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![e.id, e.turn_id, e.thread_id, e.kind, e.payload_json],
+        )?;
+        Ok(())
+    }
+
+    /// Reads a setting, e.g. `last_provider`.
+    pub fn get_setting(&self, key: &str) -> Result<Option<String>> {
+        let value = self
+            .conn()?
+            .query_row("SELECT value FROM setting WHERE key = ?1", [key], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        Ok(value)
+    }
+
+    /// Upserts a setting.
+    pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        self.conn()?.execute(
+            "INSERT INTO setting (key, value) VALUES (?1, ?2)
+             ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            params![key, value],
         )?;
         Ok(())
     }

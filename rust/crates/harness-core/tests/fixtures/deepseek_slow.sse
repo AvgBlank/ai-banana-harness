@@ -1,0 +1,16 @@
+data: {"id":"slow-0001","object":"chat.completion.chunk","created":1790000100,"model":"deepseek-flash","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}],"usage":null}
+
+data: {"id":"slow-0001","object":"chat.completion.chunk","created":1790000100,"model":"deepseek-flash","choices":[{"index":0,"delta":{"content":"one "},"finish_reason":null}],"usage":null}
+
+data: {"id":"slow-0001","object":"chat.completion.chunk","created":1790000100,"model":"deepseek-flash","choices":[{"index":0,"delta":{"content":"two "},"finish_reason":null}],"usage":null}
+
+data: {"id":"slow-0001","object":"chat.completion.chunk","created":1790000100,"model":"deepseek-flash","choices":[{"index":0,"delta":{"content":"three "},"finish_reason":null}],"usage":null}
+
+data: {"id":"slow-0001","object":"chat.completion.chunk","created":1790000100,"model":"deepseek-flash","choices":[{"index":0,"delta":{"content":"four "},"finish_reason":null}],"usage":null}
+
+data: {"id":"slow-0001","object":"chat.completion.chunk","created":1790000100,"model":"deepseek-flash","choices":[{"index":0,"delta":{"content":"five "},"finish_reason":null}],"usage":null}
+
+data: {"id":"slow-0001","object":"chat.completion.chunk","created":1790000100,"model":"deepseek-flash","choices":[{"index":0,"delta":{"content":""},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}
+
+data: [DONE]
+

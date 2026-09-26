@@ -12,8 +12,9 @@ use harness_core::{
 #[derive(Parser)]
 #[command(version, about = "A local-first coding agent")]
 struct Cli {
+    /// With no subcommand, the TUI opens.
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Subcommand)]
@@ -37,12 +38,13 @@ enum Command {
 async fn main() -> ExitCode {
     let Cli { command } = Cli::parse();
     let result = match command {
-        Command::Run {
+        None => harness_tui::run().await.map(|()| ExitCode::SUCCESS),
+        Some(Command::Run {
             provider,
             workspace,
             json,
             task,
-        } => headless(provider, workspace, json, task).await,
+        }) => headless(provider, workspace, json, task).await,
     };
     result.unwrap_or_else(|e| {
         eprintln!("error: {e:#}");
@@ -82,6 +84,7 @@ async fn headless(
             exit = match state {
                 TurnState::Done => ExitCode::SUCCESS,
                 TurnState::Error => ExitCode::from(1),
+                TurnState::Cancelled => ExitCode::from(2),
             };
         }
         if json {

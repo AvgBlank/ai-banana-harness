@@ -5,6 +5,7 @@ use anyhow::{Result, bail};
 use harness_llm::{ChatClient, ChatEvent, ClientConfig, Dialect, Message, Role, Usage};
 use harness_store::{FinishTurn, NewEvent, NewSession, NewTurn, Store};
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 use ulid::{Generator, Ulid};
 
 use crate::config::{Config, Provider};
@@ -35,6 +36,14 @@ struct Inner {
 
 pub struct TurnHandle {
     pub events: mpsc::Receiver<Event>,
+    cancel: CancellationToken,
+}
+
+impl TurnHandle {
+    /// Stops the running turn; it ends with `turn.done{state: cancelled}`.
+    pub fn cancel(&self) {
+        self.cancel.cancel();
+    }
 }
 
 impl Harness {
@@ -79,13 +88,15 @@ impl Harness {
     /// Starts a turn in the background. The stream always ends with `turn.done`.
     pub fn start_turn(&self, session_id: &str, input: String) -> TurnHandle {
         let (tx, events) = mpsc::channel(256);
+        let cancel = CancellationToken::new();
         let turn = TurnRunner {
             inner: Arc::clone(&self.inner),
             turn_id: new_id(),
             tx,
+            cancel: cancel.clone(),
         };
         tokio::spawn(turn.run(session_id.to_string(), input));
-        TurnHandle { events }
+        TurnHandle { events, cancel }
     }
 }
 
@@ -94,13 +105,14 @@ struct TurnRunner {
     inner: Arc<Inner>,
     turn_id: String,
     tx: mpsc::Sender<Event>,
+    cancel: CancellationToken,
 }
 
 impl TurnRunner {
     async fn run(self, session_id: String, input: String) {
         let mut usage = None;
         let (state, error) = match self.execute(&session_id, &input, &mut usage).await {
-            Ok(()) => (TurnState::Done, None),
+            Ok(state) => (state, None),
             Err(e) => (
                 TurnState::Error,
                 Some(self.inner.redactor.apply(&format!("{e:#}"))),
@@ -132,7 +144,7 @@ impl TurnRunner {
         session_id: &str,
         input: &str,
         usage: &mut Option<Usage>,
-    ) -> Result<()> {
+    ) -> Result<TurnState> {
         let inner = &self.inner;
         inner.store.insert_turn(&NewTurn {
             id: &self.turn_id,
@@ -156,7 +168,11 @@ impl TurnRunner {
                 content: input.to_string(),
             },
         ];
-        let mut stream = inner.client.stream(&messages).await?;
+        let mut stream = tokio::select! {
+            biased;
+            () = self.cancel.cancelled() => return Ok(TurnState::Cancelled),
+            result = inner.client.stream(&messages) => result?,
+        };
         let message_id = new_id();
         self.forward(EventKind::ModelMessage {
             thread_id: thread_id.clone(),
@@ -164,7 +180,15 @@ impl TurnRunner {
             message: None,
         })
         .await;
-        while let Some(chat_event) = stream.next().await? {
+        loop {
+            let chat_event = tokio::select! {
+                biased;
+                () = self.cancel.cancelled() => return Ok(TurnState::Cancelled),
+                chat_event = stream.next() => chat_event?,
+            };
+            let Some(chat_event) = chat_event else {
+                break;
+            };
             match chat_event {
                 ChatEvent::Delta(content) => {
                     self.forward(EventKind::ModelMessageDelta {
@@ -193,7 +217,7 @@ impl TurnRunner {
                 }
             }
         }
-        Ok(())
+        Ok(TurnState::Done)
     }
 
     /// Persists a durable event (redacted), then forwards it.

@@ -7,6 +7,12 @@ publish.workspace = true
 
 [dependencies]
 harness-core.workspace = true
+anyhow.workspace = true
+crossterm.workspace = true
+ratatui.workspace = true
+tui-markdown.workspace = true
+tokio.workspace = true
+futures-util.workspace = true
 
 [lints]
 workspace = true
