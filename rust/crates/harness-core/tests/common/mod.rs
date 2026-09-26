@@ -36,6 +36,8 @@ struct Reply {
     status: u16,
     content_type: &'static str,
     body: String,
+    /// A pause before writing each SSE part, so a test can reliably interleave with it.
+    chunk_delay: Duration,
 }
 
 #[derive(Default)]
@@ -72,6 +74,18 @@ impl FakeProvider {
             status: 200,
             content_type: "text/event-stream",
             body: body.into(),
+            chunk_delay: Duration::ZERO,
+        });
+    }
+
+    /// Like [`Self::push_sse`], but pausing before each SSE part so a test can reliably
+    /// interleave with the stream (e.g. cancel it mid-flight).
+    pub fn push_sse_slow(&self, body: impl Into<String>, chunk_delay: Duration) {
+        self.push(Reply {
+            status: 200,
+            content_type: "text/event-stream",
+            body: body.into(),
+            chunk_delay,
         });
     }
 
@@ -81,6 +95,7 @@ impl FakeProvider {
             status,
             content_type: "application/json",
             body: body.into(),
+            chunk_delay: Duration::ZERO,
         });
     }
 
@@ -141,6 +156,7 @@ async fn serve(mut socket: TcpStream, state: Arc<Mutex<State>>) {
             status: 500,
             content_type: "application/json",
             body: r#"{"error":{"message":"fake provider: no reply queued"}}"#.to_string(),
+            chunk_delay: Duration::ZERO,
         })
     };
     let head = format!(
@@ -152,6 +168,9 @@ async fn serve(mut socket: TcpStream, state: Arc<Mutex<State>>) {
     socket.write_all(head.as_bytes()).await.unwrap();
     // Write one SSE event at a time so the client parses a genuinely incremental stream.
     for part in reply.body.split_inclusive("\n\n") {
+        if !reply.chunk_delay.is_zero() {
+            tokio::time::sleep(reply.chunk_delay).await;
+        }
         socket.write_all(part.as_bytes()).await.unwrap();
         socket.flush().await.unwrap();
     }
