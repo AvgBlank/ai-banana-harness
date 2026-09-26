@@ -6,7 +6,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use harness_core::{Config, Event, EventKind, Harness, HarnessOptions, Provider, Store};
+use harness_core::{
+    Config, ConfigPaths, Event, EventKind, Harness, HarnessOptions, Provider, Store,
+};
 use serde_json::Value;
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -169,12 +171,54 @@ pub struct TestHarness {
 
 impl TestHarness {
     pub async fn open(provider: Provider) -> Self {
+        Self::open_configured(provider, |_| {}).await
+    }
+
+    /// Like [`open`](Self::open), but lets the test adjust the embedded default config (e.g.
+    /// `skills.paths`) before the harness is built.
+    pub async fn open_configured(provider: Provider, configure: impl FnOnce(&mut Config)) -> Self {
+        let mut config = Config::embedded_default().unwrap();
+        // The committed default's skills paths include the real user's config directory;
+        // tests must not depend on (or accidentally pick up) whatever is on the host machine.
+        config.skills.paths.clear();
+        configure(&mut config);
+        Self::open_with(provider, config).await
+    }
+
+    /// Like [`open`](Self::open), but layers `user_toml` and `workspace_toml` through
+    /// [`harness_core::Config::load`] before opening, to exercise config-layering precedence
+    /// end to end (e.g. the model name that reaches the fake server's request body).
+    pub async fn open_layered(
+        provider: Provider,
+        user_toml: Option<&str>,
+        workspace_toml: Option<&str>,
+    ) -> Self {
+        let overlay_dir = tempfile::tempdir().unwrap();
+        let user_path = user_toml.map(|text| {
+            let path = overlay_dir.path().join("user-config.toml");
+            std::fs::write(&path, text).unwrap();
+            path
+        });
+        let workspace_path = workspace_toml.map(|text| {
+            let path = overlay_dir.path().join("workspace-config.toml");
+            std::fs::write(&path, text).unwrap();
+            path
+        });
+        let mut config = Config::load(ConfigPaths {
+            user: user_path.as_deref(),
+            workspace: workspace_path.as_deref(),
+        })
+        .unwrap();
+        config.skills.paths.clear();
+        Self::open_with(provider, config).await
+    }
+
+    async fn open_with(provider: Provider, mut config: Config) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().join("workspace");
         std::fs::create_dir_all(&workspace).unwrap();
         let db_path = dir.path().join("harness.db");
         let fake = FakeProvider::start().await;
-        let mut config = Config::embedded_default().unwrap();
         config.providers.deepseek.base_url = fake.base_url.clone();
         config.providers.qwen.base_url = fake.base_url.clone();
         let harness = Harness::open(HarnessOptions {

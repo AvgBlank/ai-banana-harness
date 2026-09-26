@@ -8,12 +8,17 @@ use etcetera::BaseStrategy;
 mod config;
 mod event;
 mod harness;
+mod instructions;
+mod skills;
 
-pub use config::{AgentConfig, Config, Provider, ProviderConfig, Providers};
+pub use config::{
+    AgentConfig, Config, ConfigPaths, Provider, ProviderConfig, Providers, SkillsConfig,
+};
 pub use event::{Event, EventKind, ModelOutput, TurnState};
 pub use harness::{Harness, HarnessOptions, TurnHandle};
 pub use harness_llm::Usage;
 pub use harness_store::Store;
+pub use skills::{LoadedSkills, Skill};
 
 /// The product name. Renaming the product touches these two constants and the binary's package name.
 pub const APP_NAME: &str = "Banana Harness";
