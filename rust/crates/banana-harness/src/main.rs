@@ -1,0 +1,109 @@
+use std::io::Write;
+use std::path::PathBuf;
+use std::process::ExitCode;
+
+use anyhow::{Context, Result};
+use clap::{Parser, Subcommand};
+use harness_core::{
+    Config, EventKind, Harness, HarnessOptions, Provider, Store, TurnState, api_key_from_env,
+    default_db_path,
+};
+
+#[derive(Parser)]
+#[command(version, about = "A local-first coding agent")]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Run one task without the TUI and print the result.
+    Run {
+        /// deepseek or qwen
+        #[arg(long)]
+        provider: Provider,
+        /// The repository to work in; defaults to $WORKSPACE, then the current directory.
+        #[arg(long, env = "WORKSPACE")]
+        workspace: Option<PathBuf>,
+        /// Print every event as one JSON object per line.
+        #[arg(long)]
+        json: bool,
+        task: String,
+    },
+}
+
+#[tokio::main]
+async fn main() -> ExitCode {
+    let Cli { command } = Cli::parse();
+    let result = match command {
+        Command::Run {
+            provider,
+            workspace,
+            json,
+            task,
+        } => headless(provider, workspace, json, task).await,
+    };
+    result.unwrap_or_else(|e| {
+        eprintln!("error: {e:#}");
+        ExitCode::from(1)
+    })
+}
+
+async fn headless(
+    provider: Provider,
+    workspace: Option<PathBuf>,
+    json: bool,
+    task: String,
+) -> Result<ExitCode> {
+    let api_key = api_key_from_env()?;
+    let workspace = match workspace {
+        Some(path) => path,
+        None => std::env::current_dir()?,
+    };
+    let workspace = workspace
+        .canonicalize()
+        .with_context(|| format!("workspace {} not found", workspace.display()))?;
+    let harness = Harness::open(HarnessOptions {
+        config: Config::embedded_default()?,
+        store: Store::open(&default_db_path()?)?,
+        provider,
+        api_key,
+        workspace,
+    })?;
+    let session_id = harness.create_session()?;
+    let mut turn = harness.start_turn(&session_id, task);
+
+    let mut stdout = std::io::stdout();
+    let mut exit = ExitCode::from(1);
+    let mut printed = false;
+    while let Some(event) = turn.events.recv().await {
+        if let EventKind::TurnDone { state, .. } = &event.kind {
+            exit = match state {
+                TurnState::Done => ExitCode::SUCCESS,
+                TurnState::Error => ExitCode::from(1),
+            };
+        }
+        if json {
+            writeln!(stdout, "{}", serde_json::to_string(&event)?)?;
+            continue;
+        }
+        match event.kind {
+            EventKind::ModelMessageDelta { content, .. } => {
+                write!(stdout, "{content}")?;
+                stdout.flush()?;
+                printed = true;
+            }
+            EventKind::TurnDone { error, .. } => {
+                if printed {
+                    writeln!(stdout)?;
+                }
+                if let Some(error) = error {
+                    eprintln!("error: {error}");
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(exit)
+}

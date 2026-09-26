@@ -1,0 +1,8 @@
+data: {"id":"0b7e3c41-90aa-4f6d-8e2b-6c1f5a3d7e22","object":"chat.completion.chunk","created":1790000001,"model":"deepseek-flash","system_fingerprint":"fp_v41_flash","choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"id":"0b7e3c41-90aa-4f6d-8e2b-6c1f5a3d7e22","object":"chat.completion.chunk","created":1790000001,"model":"deepseek-flash","system_fingerprint":"fp_v41_flash","choices":[{"index":0,"delta":{"content":"This answer is cut"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"id":"0b7e3c41-90aa-4f6d-8e2b-6c1f5a3d7e22","object":"chat.completion.chunk","created":1790000001,"model":"deepseek-flash","system_fingerprint":"fp_v41_flash","choices":[{"index":0,"delta":{"content":""},"logprobs":null,"finish_reason":"length"}],"usage":{"prompt_tokens":21,"completion_tokens":8192,"total_tokens":8213,"prompt_tokens_details":{"cached_tokens":0},"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":21}}
+
+data: [DONE]
+

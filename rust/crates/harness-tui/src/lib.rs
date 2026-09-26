@@ -1,0 +1,1 @@
+//! The ratatui terminal app.

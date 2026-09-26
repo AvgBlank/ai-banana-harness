@@ -1,0 +1,19 @@
+# Committed evaluation config, embedded in the binary.
+# The API key never lives in a config file: it is read only from AI_API_KEY.
+
+[providers.deepseek]
+base_url = "https://api.deepseek.com"
+model = "deepseek-flash"
+temperature = 0.0
+
+[providers.qwen]
+base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+model = "qwen3.8-flash"
+temperature = 0.0
+seed = 42
+
+[agent]
+instructions = """
+You are an autonomous coding agent working in the user's workspace. \
+Resolve the user's task completely: understand the relevant code, make focused changes, \
+and verify them. Be concise and precise."""
