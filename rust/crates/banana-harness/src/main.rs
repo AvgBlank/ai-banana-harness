@@ -88,6 +88,8 @@ async fn headless(
     let mut stdout = std::io::stdout();
     let mut exit = ExitCode::from(1);
     let mut printed = false;
+    // Plain output is the root thread's answer only; subagents' text would interleave with it.
+    let mut subagents = std::collections::HashSet::new();
     while let Some(event) = turn.events.recv().await {
         if let EventKind::TurnDone { state, .. } = &event.kind {
             exit = match state {
@@ -101,7 +103,12 @@ async fn headless(
             continue;
         }
         match event.kind {
-            EventKind::ModelMessageDelta { content, .. } => {
+            EventKind::ThreadCreated { thread_id, .. } => {
+                subagents.insert(thread_id);
+            }
+            EventKind::ModelMessageDelta {
+                thread_id, content, ..
+            } if !subagents.contains(&thread_id) => {
                 write!(stdout, "{content}")?;
                 stdout.flush()?;
                 printed = true;

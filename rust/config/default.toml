@@ -19,9 +19,8 @@ seed = 42
 instructions = """
 Resolve the user's task completely: understand the relevant code, make focused changes, \
 and verify them. Be concise and precise."""
-# Subagents (ticket 07) are not implemented yet; the config flag exists so the system
-# prompt's <sub-agents> section can be exercised ahead of it.
-subagents = false
+# Offers the root thread the create_sub_agent tool (up to five run in parallel).
+subagents = true
 
 [skills]
 paths = [".banana-harness/skills", "~/.config/banana-harness/skills"]

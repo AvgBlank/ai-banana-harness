@@ -40,12 +40,17 @@ struct Reply {
     body: String,
     /// A pause before writing each SSE part, so a test can reliably interleave with it.
     chunk_delay: Duration,
+    /// When set, only a request whose body contains this text is served this reply.
+    matcher: Option<String>,
 }
 
 #[derive(Default)]
 struct State {
     replies: VecDeque<Reply>,
     requests: Vec<Request>,
+    /// Requests whose reply is still being written, and the most seen at once.
+    in_flight: usize,
+    max_in_flight: usize,
 }
 
 /// A minimal OpenAI-compatible HTTP server. Each request pops the next queued reply;
@@ -77,7 +82,30 @@ impl FakeProvider {
             content_type: "text/event-stream",
             body: body.into(),
             chunk_delay: Duration::ZERO,
+            matcher: None,
         });
+    }
+
+    /// Queues a slow SSE reply served only to a request whose body contains `needle`, so
+    /// concurrent threads each get their own answer regardless of arrival order.
+    pub fn push_sse_matching(
+        &self,
+        needle: impl Into<String>,
+        body: impl Into<String>,
+        chunk_delay: Duration,
+    ) {
+        self.push(Reply {
+            status: 200,
+            content_type: "text/event-stream",
+            body: body.into(),
+            chunk_delay,
+            matcher: Some(needle.into()),
+        });
+    }
+
+    /// The most requests that were being answered at the same time.
+    pub fn max_in_flight(&self) -> usize {
+        self.state.lock().unwrap().max_in_flight
     }
 
     /// Like [`Self::push_sse`], but pausing before each SSE part so a test can reliably
@@ -88,6 +116,7 @@ impl FakeProvider {
             content_type: "text/event-stream",
             body: body.into(),
             chunk_delay,
+            matcher: None,
         });
     }
 
@@ -98,6 +127,7 @@ impl FakeProvider {
             content_type: "application/json",
             body: body.into(),
             chunk_delay: Duration::ZERO,
+            matcher: None,
         });
     }
 
@@ -149,17 +179,29 @@ async fn serve(mut socket: TcpStream, state: Arc<Mutex<State>>) {
 
     let reply = {
         let mut state = state.lock().unwrap();
+        let body_text = body.to_string();
         state.requests.push(Request {
             path,
             headers,
             body,
         });
-        state.replies.pop_front().unwrap_or(Reply {
-            status: 500,
-            content_type: "application/json",
-            body: r#"{"error":{"message":"fake provider: no reply queued"}}"#.to_string(),
-            chunk_delay: Duration::ZERO,
-        })
+        state.in_flight += 1;
+        state.max_in_flight = state.max_in_flight.max(state.in_flight);
+        let eligible = state.replies.iter().position(|reply| {
+            reply
+                .matcher
+                .as_ref()
+                .is_none_or(|needle| body_text.contains(needle.as_str()))
+        });
+        eligible
+            .and_then(|i| state.replies.remove(i))
+            .unwrap_or(Reply {
+                status: 500,
+                content_type: "application/json",
+                body: r#"{"error":{"message":"fake provider: no reply queued"}}"#.to_string(),
+                chunk_delay: Duration::ZERO,
+                matcher: None,
+            })
     };
     let head = format!(
         "HTTP/1.1 {} FAKE\r\ncontent-type: {}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
@@ -176,7 +218,57 @@ async fn serve(mut socket: TcpStream, state: Arc<Mutex<State>>) {
         socket.write_all(part.as_bytes()).await.unwrap();
         socket.flush().await.unwrap();
     }
+    state.lock().unwrap().in_flight -= 1;
     let _ = socket.shutdown().await;
+}
+
+/// A DeepSeek-format SSE reply that streams `content` and stops.
+pub fn sse_text(content: &str) -> String {
+    sse(
+        &[
+            serde_json::json!({"role": "assistant", "content": ""}),
+            serde_json::json!({"content": content}),
+        ],
+        "stop",
+    )
+}
+
+/// A DeepSeek-format SSE reply asking for `(id, name, arguments)` tool calls.
+pub fn sse_tool_calls(calls: &[(&str, &str, &str)]) -> String {
+    let mut deltas = vec![serde_json::json!({"role": "assistant", "content": ""})];
+    for (index, (id, name, arguments)) in calls.iter().enumerate() {
+        deltas.push(serde_json::json!({"tool_calls": [{
+            "index": index,
+            "id": id,
+            "type": "function",
+            "function": {"name": name, "arguments": arguments},
+        }]}));
+    }
+    sse(&deltas, "tool_calls")
+}
+
+fn sse(deltas: &[Value], finish_reason: &str) -> String {
+    let chunk = |delta: &Value, finish: Option<&str>| {
+        serde_json::json!({
+            "id": "fake",
+            "object": "chat.completion.chunk",
+            "model": "deepseek-flash",
+            "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
+            "usage": finish.map(|_| serde_json::json!({
+                "prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15
+            })),
+        })
+    };
+    let mut out = String::new();
+    for delta in deltas {
+        out.push_str(&format!("data: {}\n\n", chunk(delta, None)));
+    }
+    out.push_str(&format!(
+        "data: {}\n\n",
+        chunk(&serde_json::json!({}), Some(finish_reason))
+    ));
+    out.push_str("data: [DONE]\n\n");
+    out
 }
 
 /// A harness whose provider base URL points at a [`FakeProvider`], with a temp workspace and database.

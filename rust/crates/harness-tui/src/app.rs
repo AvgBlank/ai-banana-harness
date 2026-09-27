@@ -62,6 +62,24 @@ pub enum TranscriptItem {
     Tool(ToolCallItem),
     /// A status note for a slash command, e.g. a new or resumed session.
     System(String),
+    /// A subagent thread, holding its own messages and tool cards.
+    Subagent(SubagentCard),
+}
+
+pub struct SubagentCard {
+    thread_id: String,
+    pub parent: String,
+    pub title: String,
+    pub status: SubagentStatus,
+    /// The child thread's own transcript: assistant messages and tool cards.
+    pub items: Vec<TranscriptItem>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SubagentStatus {
+    Running,
+    Done,
+    Error(String),
 }
 
 pub struct AssistantMessage {
@@ -233,49 +251,19 @@ impl MainState {
         self.last_error = None;
     }
 
+    /// The turn's subagent threads in creation order: the subagent tree.
+    pub fn subagents(&self) -> impl Iterator<Item = &SubagentCard> {
+        self.transcript.iter().filter_map(|item| match item {
+            TranscriptItem::Subagent(card) => Some(card),
+            _ => None,
+        })
+    }
+
     /// Applies one event from a turn's stream. Deltas append to the streaming message in
-    /// place; earlier transcript items are never touched.
+    /// place; earlier transcript items are never touched. A subagent's events go into its card.
     pub fn apply_event(&mut self, event: Event) {
         match event.kind {
             EventKind::TurnCreated { .. } => {}
-            EventKind::ModelMessage {
-                thread_id,
-                message_id,
-                message: None,
-            } => {
-                self.transcript
-                    .push(TranscriptItem::Assistant(AssistantMessage {
-                        thread_id,
-                        message_id,
-                        content: String::new(),
-                        error: None,
-                    }));
-            }
-            EventKind::ModelMessageDelta {
-                thread_id,
-                message_id,
-                content,
-            } => {
-                if let Some(message) = self.assistant_message_mut(&thread_id, &message_id) {
-                    message.content.push_str(&content);
-                }
-            }
-            EventKind::ModelMessage {
-                thread_id,
-                message_id,
-                message: Some(output),
-            } => {
-                if let Some(usage) = &output.usage {
-                    self.context_tokens = usage.prompt_tokens + usage.completion_tokens;
-                }
-                if let Some(message) = self.assistant_message_mut(&thread_id, &message_id) {
-                    message.content = output.content;
-                }
-            }
-            EventKind::ContextCompacted { usage, .. } => {
-                self.context_tokens = usage.prompt_tokens + usage.completion_tokens;
-                self.push_system_message("⟳ context compacted".to_string());
-            }
             EventKind::TurnDone { state, error } => {
                 self.turn_running = false;
                 self.spinner_frame = 0;
@@ -283,28 +271,45 @@ impl MainState {
                     self.last_error = error;
                 }
             }
-            EventKind::ToolCall {
-                tool_call_id,
-                name,
-                arguments,
-                ..
+            EventKind::ThreadCreated {
+                thread_id,
+                parent,
+                title,
             } => {
-                self.transcript.push(TranscriptItem::Tool(ToolCallItem {
-                    tool_call_id,
-                    name,
-                    arguments,
-                    outcome: None,
-                    expanded: false,
+                self.transcript.push(TranscriptItem::Subagent(SubagentCard {
+                    thread_id,
+                    parent,
+                    title,
+                    status: SubagentStatus::Running,
+                    items: Vec::new(),
                 }));
             }
-            EventKind::ToolResponse {
-                tool_call_id,
-                content,
-                blocked,
-                ..
-            } => {
-                if let Some(call) = self.tool_call_mut(&tool_call_id) {
-                    call.outcome = Some(ToolOutcome { content, blocked });
+            EventKind::ThreadDone { thread_id, error } => {
+                if let Some(card) = self.subagent_mut(&thread_id) {
+                    card.status = error.map_or(SubagentStatus::Done, SubagentStatus::Error);
+                }
+            }
+            kind => {
+                let thread_id = kind.thread_id().unwrap_or_default().to_string();
+                if self.subagent_mut(&thread_id).is_none() {
+                    match &kind {
+                        EventKind::ModelMessage {
+                            message: Some(output),
+                            ..
+                        } => {
+                            if let Some(usage) = &output.usage {
+                                self.context_tokens = usage.prompt_tokens + usage.completion_tokens;
+                            }
+                        }
+                        EventKind::ContextCompacted { usage, .. } => {
+                            self.context_tokens = usage.prompt_tokens + usage.completion_tokens;
+                        }
+                        _ => {}
+                    }
+                }
+                match self.subagent_mut(&thread_id) {
+                    Some(card) => apply_thread_event(&mut card.items, kind),
+                    None => apply_thread_event(&mut self.transcript, kind),
                 }
             }
         }
@@ -312,44 +317,116 @@ impl MainState {
 
     /// Enter (on empty input) or Ctrl+O: expands or collapses the most recent expandable card.
     pub fn toggle_last_card(&mut self) {
-        let card = self
-            .transcript
-            .iter_mut()
-            .rev()
-            .find_map(|item| match item {
-                TranscriptItem::Tool(call) if call.expandable() => Some(call),
-                _ => None,
-            });
+        let card = last_expandable_card(&mut self.transcript);
         if let Some(call) = card {
             call.expanded = !call.expanded;
         }
     }
 
-    fn assistant_message_mut(
-        &mut self,
-        thread_id: &str,
-        message_id: &str,
-    ) -> Option<&mut AssistantMessage> {
-        self.transcript
-            .iter_mut()
-            .rev()
-            .find_map(|item| match item {
-                TranscriptItem::Assistant(message)
-                    if message.thread_id == thread_id && message.message_id == message_id =>
-                {
-                    Some(message)
-                }
-                _ => None,
-            })
+    fn subagent_mut(&mut self, thread_id: &str) -> Option<&mut SubagentCard> {
+        self.transcript.iter_mut().find_map(|item| match item {
+            TranscriptItem::Subagent(card) if card.thread_id == thread_id => Some(card),
+            _ => None,
+        })
     }
+}
 
-    fn tool_call_mut(&mut self, tool_call_id: &str) -> Option<&mut ToolCallItem> {
-        self.transcript
-            .iter_mut()
-            .rev()
-            .find_map(|item| match item {
-                TranscriptItem::Tool(call) if call.tool_call_id == tool_call_id => Some(call),
-                _ => None,
-            })
+fn last_expandable_card(items: &mut [TranscriptItem]) -> Option<&mut ToolCallItem> {
+    items.iter_mut().rev().find_map(|item| match item {
+        TranscriptItem::Tool(call) if call.expandable() => Some(call),
+        TranscriptItem::Subagent(card) => last_expandable_card(&mut card.items),
+        _ => None,
+    })
+}
+
+/// A thread's own message and tool events, applied to that thread's transcript.
+fn apply_thread_event(items: &mut Vec<TranscriptItem>, kind: EventKind) {
+    match kind {
+        EventKind::ModelMessage {
+            thread_id,
+            message_id,
+            message: None,
+        } => {
+            items.push(TranscriptItem::Assistant(AssistantMessage {
+                thread_id,
+                message_id,
+                content: String::new(),
+                error: None,
+            }));
+        }
+        EventKind::ModelMessageDelta {
+            thread_id,
+            message_id,
+            content,
+        } => {
+            if let Some(message) = assistant_message_mut(items, &thread_id, &message_id) {
+                message.content.push_str(&content);
+            }
+        }
+        EventKind::ModelMessage {
+            thread_id,
+            message_id,
+            message: Some(output),
+        } => {
+            if let Some(message) = assistant_message_mut(items, &thread_id, &message_id) {
+                message.content = output.content;
+            }
+        }
+        EventKind::ToolCall {
+            tool_call_id,
+            name,
+            arguments,
+            ..
+        } => {
+            items.push(TranscriptItem::Tool(ToolCallItem {
+                tool_call_id,
+                name,
+                arguments,
+                outcome: None,
+                expanded: false,
+            }));
+        }
+        EventKind::ToolResponse {
+            tool_call_id,
+            content,
+            blocked,
+            ..
+        } => {
+            if let Some(call) = tool_call_mut(items, &tool_call_id) {
+                call.outcome = Some(ToolOutcome { content, blocked });
+            }
+        }
+        EventKind::ContextCompacted { .. } => {
+            items.push(TranscriptItem::System("⟳ context compacted".to_string()));
+        }
+        EventKind::TurnCreated { .. }
+        | EventKind::TurnDone { .. }
+        | EventKind::ThreadCreated { .. }
+        | EventKind::ThreadDone { .. } => {}
     }
+}
+
+fn assistant_message_mut<'a>(
+    items: &'a mut [TranscriptItem],
+    thread_id: &str,
+    message_id: &str,
+) -> Option<&'a mut AssistantMessage> {
+    items.iter_mut().rev().find_map(|item| match item {
+        TranscriptItem::Assistant(message)
+            if message.thread_id == thread_id && message.message_id == message_id =>
+        {
+            Some(message)
+        }
+        _ => None,
+    })
+}
+
+fn tool_call_mut<'a>(
+    items: &'a mut [TranscriptItem],
+    tool_call_id: &str,
+) -> Option<&'a mut ToolCallItem> {
+    items.iter_mut().rev().find_map(|item| match item {
+        TranscriptItem::Tool(call) if call.tool_call_id == tool_call_id => Some(call),
+        _ => None,
+    })
 }

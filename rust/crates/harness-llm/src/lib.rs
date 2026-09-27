@@ -65,6 +65,7 @@ pub struct FunctionCall {
 
 /// One tool a model call may use. `parameters` is the reduced schema (`type`/`properties`/
 /// `required` only) a caller has already prepared.
+#[derive(Clone)]
 pub struct ToolDefinition {
     pub name: String,
     pub description: String,

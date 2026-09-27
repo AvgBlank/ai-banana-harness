@@ -11,6 +11,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0001.sql"),
     include_str!("../migrations/0002.sql"),
     include_str!("../migrations/0003.sql"),
+    include_str!("../migrations/0004.sql"),
 ];
 
 const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
@@ -66,11 +67,12 @@ pub struct Turn {
 }
 
 /// A thread-context snapshot to upsert after an LLM or tool step. `parent_id: None` marks the
-/// session's root thread.
+/// session's root thread; a subagent thread names its parent and carries a `title`.
 pub struct UpsertThread<'a> {
     pub id: &'a str,
     pub session_id: &'a str,
     pub parent_id: Option<&'a str>,
+    pub title: Option<&'a str>,
     pub context_json: &'a str,
     pub context_usage_json: Option<&'a str>,
 }
@@ -80,6 +82,7 @@ pub struct Thread {
     pub id: String,
     pub session_id: String,
     pub parent_id: Option<String>,
+    pub title: Option<String>,
     pub context_json: String,
     pub context_usage_json: Option<String>,
     pub updated_at: String,
@@ -292,8 +295,8 @@ impl Store {
         let conn = self.conn()?;
         conn.execute(
             &format!(
-                "INSERT INTO thread (id, session_id, parent_id, context_json, context_usage_json, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, {NOW})
+                "INSERT INTO thread (id, session_id, parent_id, title, context_json, context_usage_json, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, {NOW})
                  ON CONFLICT (id) DO UPDATE SET
                      context_json = excluded.context_json,
                      context_usage_json = excluded.context_usage_json,
@@ -303,6 +306,7 @@ impl Store {
                 t.id,
                 t.session_id,
                 t.parent_id,
+                t.title,
                 t.context_json,
                 t.context_usage_json
             ],
@@ -316,22 +320,22 @@ impl Store {
         let thread = self
             .conn()?
             .query_row(
-                "SELECT id, session_id, parent_id, context_json, context_usage_json, updated_at
-                 FROM thread WHERE session_id = ?1 AND parent_id IS NULL",
+                &format!("SELECT {THREAD_COLUMNS} FROM thread WHERE session_id = ?1 AND parent_id IS NULL"),
                 [session_id],
-                |r| {
-                    Ok(Thread {
-                        id: r.get(0)?,
-                        session_id: r.get(1)?,
-                        parent_id: r.get(2)?,
-                        context_json: r.get(3)?,
-                        context_usage_json: r.get(4)?,
-                        updated_at: r.get(5)?,
-                    })
-                },
+                thread_row,
             )
             .optional()?;
         Ok(thread)
+    }
+
+    /// Every thread of a session, root and subagents, in creation order.
+    pub fn threads(&self, session_id: &str) -> Result<Vec<Thread>> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {THREAD_COLUMNS} FROM thread WHERE session_id = ?1 ORDER BY rowid"
+        ))?;
+        let rows = stmt.query_map([session_id], thread_row)?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
     /// A turn's durable events in the order they were written.
@@ -353,6 +357,21 @@ impl Store {
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
+}
+
+const THREAD_COLUMNS: &str =
+    "id, session_id, parent_id, title, context_json, context_usage_json, updated_at";
+
+fn thread_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
+    Ok(Thread {
+        id: r.get(0)?,
+        session_id: r.get(1)?,
+        parent_id: r.get(2)?,
+        title: r.get(3)?,
+        context_json: r.get(4)?,
+        context_usage_json: r.get(5)?,
+        updated_at: r.get(6)?,
+    })
 }
 
 fn migrate(conn: &mut Connection) -> Result<()> {

@@ -1,16 +1,22 @@
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::{Arc, LazyLock, Mutex};
 
 use anyhow::{Context, Result, anyhow, bail};
 use harness_llm::{
-    ChatClient, ChatEvent, ClientConfig, Completion, Dialect, Message, Role, Usage,
+    ChatClient, ChatEvent, ClientConfig, Completion, Dialect, Message, Role, ToolCallResult,
+    ToolDefinition, Usage,
 };
 use harness_store::{FinishTurn, NewEvent, NewSession, NewTurn, Session, Store, UpsertThread};
-use tokio::sync::mpsc;
+use harness_tools::ToolResult;
+use tokio::sync::{Semaphore, mpsc};
+use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use ulid::{Generator, Ulid};
 
+use crate::builtins::{Builtin, MAX_PARALLEL_SUB_AGENTS, SubAgentRequest};
 use crate::compaction;
 use crate::config::{Config, Provider};
 use crate::event::{Event, EventKind, ModelOutput, TurnState};
@@ -159,7 +165,9 @@ impl Harness {
     }
 }
 
-/// The only writer to the store: each durable event is persisted, then forwarded.
+/// The only writer to the store: each durable event is persisted, then forwarded. Cloned into
+/// each subagent task, so every thread of the turn writes through the same channel.
+#[derive(Clone)]
 struct TurnRunner {
     inner: Arc<Inner>,
     turn_id: String,
@@ -256,38 +264,30 @@ impl TurnRunner {
             deferred_mcp_servers: &inner.mcp.deferred_servers(),
             root: true,
         });
+        // A subagent never gets the user instructions or the subagent section: it can't spawn.
+        let child_prompt = system_prompt(SystemPromptInput {
+            workspace: &inner.workspace,
+            config_instructions: "",
+            agents_md: None,
+            skills: &loaded_skills.skills,
+            subagents_enabled: false,
+            deferred_mcp_servers: &inner.mcp.deferred_servers(),
+            root: false,
+        });
         let history: Vec<Message> = existing_thread
             .as_ref()
             .and_then(|t| serde_json::from_str(&t.context_json).ok())
             .unwrap_or_default();
         let mut messages = Vec::with_capacity(history.len() + 2);
-        messages.push(Message {
-            role: Role::System,
-            content: prompt,
-            tool_calls: Vec::new(),
-            tool_call_id: None,
-        });
+        messages.push(text_message(Role::System, prompt));
         messages.extend(history);
-        messages.push(Message {
-            role: Role::User,
-            content: input.to_string(),
-            tool_calls: Vec::new(),
-            tool_call_id: None,
-        });
-        // The stored usage already counts the history; only what's new since is estimated.
+        messages.push(text_message(Role::User, input.to_string()));
+
         let stored_usage: Option<Usage> = existing_thread
             .as_ref()
             .and_then(|t| t.context_usage_json.as_deref())
             .and_then(|json| serde_json::from_str(json).ok());
-        let uncounted = if stored_usage.is_some() {
-            &messages[messages.len() - 1..]
-        } else {
-            &messages[..]
-        };
-        let mut context_usage = stored_usage.unwrap_or_default();
-        context_usage.prompt_tokens += compaction::estimate_tokens(uncounted);
-        let threshold = compaction::threshold(provider_config);
-
+        let builtin_definitions = Builtin::definitions(true, &inner.config.agent);
         // Starts any preload MCP server not yet connected, which can take a while.
         let tools = tokio::select! {
             biased;
@@ -297,18 +297,64 @@ impl TurnRunner {
                 inner.workspace.clone(),
                 inner.config.tools.clone(),
                 inner.config.permission.clone(),
+                &builtin_definitions,
             ) => {
                 Arc::new(tools)
             }
         };
+        let shared = Arc::new(TurnShared {
+            session_id: session_id.to_string(),
+            client,
+            child_prompt,
+            tools,
+            threshold: compaction::threshold(provider_config),
+        });
+        let root = ThreadInfo {
+            id: thread_id,
+            parent: None,
+            title: None,
+        };
+        Ok(
+            match self
+                .run_thread(&shared, &root, &mut messages, usage, stored_usage)
+                .await?
+            {
+                ThreadEnd::Done(_) => TurnState::Done,
+                ThreadEnd::Cancelled => TurnState::Cancelled,
+            },
+        )
+    }
 
-        // One iteration per LLM round: stream an answer, and if it asked for tool calls, run
-        // them and go around again. A round with no tool calls ends the turn.
+    /// One thread's loop, root or subagent: stream an answer, and if it asked for tool calls,
+    /// run them and go around again. A round with no tool calls ends the thread with its text.
+    async fn run_thread(
+        &self,
+        shared: &Arc<TurnShared>,
+        thread: &ThreadInfo,
+        messages: &mut Vec<Message>,
+        usage: &mut Option<Usage>,
+        stored_usage: Option<Usage>,
+    ) -> Result<ThreadEnd> {
+        let mut tools: Vec<ToolDefinition> = shared.tools.definitions.clone();
+        tools.extend(Builtin::definitions(
+            thread.is_root(),
+            &self.inner.config.agent,
+        ));
+        let thread_id = &thread.id;
+        // The stored usage already counts history; estimate only new input on resume.
+        let uncounted = if stored_usage.is_some() {
+            &messages[messages.len() - 1..]
+        } else {
+            &messages[..]
+        };
+        let mut context_usage = stored_usage.unwrap_or_default();
+        context_usage.prompt_tokens += compaction::estimate_tokens(uncounted);
+
         loop {
-            if compaction::is_due(&context_usage, threshold) {
+            if compaction::is_due(&context_usage, shared.threshold) {
                 let request = compaction::summary_request(&messages[1..]);
-                let Some(summary) = self.complete(&client, &request).await? else {
-                    return Ok(TurnState::Cancelled);
+                let Some(summary) = self.complete(&shared.client, &request).await? else {
+                    return Ok(ThreadEnd::Cancelled);
                 };
                 let compacted = compaction::compacted_context(summary.content);
                 let summary_tokens = summary.usage.map_or_else(
@@ -323,13 +369,13 @@ impl TurnRunner {
                     usage: context_usage.clone(),
                 })
                 .await?;
-                self.snapshot_thread(session_id, &thread_id, &messages, &context_usage)?;
+                self.snapshot_thread(&shared.session_id, thread, messages, &context_usage)?;
             }
 
             let mut stream = tokio::select! {
                 biased;
-                () = self.cancel.cancelled() => return Ok(TurnState::Cancelled),
-                result = client.stream(&messages, &tools.definitions) => result?,
+                () = self.cancel.cancelled() => return Ok(ThreadEnd::Cancelled),
+                result = shared.client.stream(messages, &tools) => result?,
             };
             let message_id = new_id();
             self.forward(EventKind::ModelMessage {
@@ -341,7 +387,7 @@ impl TurnRunner {
             let completion = loop {
                 let chat_event = tokio::select! {
                     biased;
-                    () = self.cancel.cancelled() => return Ok(TurnState::Cancelled),
+                    () = self.cancel.cancelled() => return Ok(ThreadEnd::Cancelled),
                     chat_event = stream.next() => chat_event?,
                 };
                 let Some(chat_event) = chat_event else {
@@ -379,7 +425,7 @@ impl TurnRunner {
 
             messages.push(Message {
                 role: Role::Assistant,
-                content: completion.content,
+                content: completion.content.clone(),
                 tool_calls: completion
                     .tool_calls
                     .iter()
@@ -403,10 +449,10 @@ impl TurnRunner {
             }
             // A snapshot after every LLM step, so a resumed session picks up mid-turn state
             // even if nothing runs after this (a plain answer, or the process stopping here).
-            self.snapshot_thread(session_id, &thread_id, &messages, &context_usage)?;
+            self.snapshot_thread(&shared.session_id, thread, messages, &context_usage)?;
 
             if completion.tool_calls.is_empty() {
-                return Ok(TurnState::Done);
+                return Ok(ThreadEnd::Done(completion.content));
             }
 
             for call in &completion.tool_calls {
@@ -418,23 +464,19 @@ impl TurnRunner {
                 })
                 .await?;
             }
-
-            // All of a round's calls run concurrently; results are still recorded in order. Host
-            // calls are blocking filesystem/process work, spawned onto their own OS thread inside
-            // `TurnTools::call`'s Host branch; MCP calls await network/IPC there instead.
-            let mut handles = Vec::with_capacity(completion.tool_calls.len());
-            for call in completion.tool_calls.clone() {
-                let tools = Arc::clone(&tools);
-                handles.push(tokio::spawn(async move {
-                    tools.call(&call.name, &call.arguments).await
-                }));
+            let results = self
+                .run_tool_calls(shared, thread, &completion.tool_calls)
+                .await?;
+            if self.cancel.is_cancelled() {
+                return Ok(ThreadEnd::Cancelled);
             }
-            let mut batch = Vec::with_capacity(handles.len());
-            for (call, handle) in completion.tool_calls.iter().zip(handles) {
-                let result = handle.await.context("tool call task panicked")?;
-                batch.push((call.name.clone(), result));
-            }
-            let workspace = inner.workspace.clone();
+            let mut batch: Vec<(String, ToolResult)> = completion
+                .tool_calls
+                .iter()
+                .zip(results)
+                .map(|(call, result)| (call.name.clone(), result))
+                .collect();
+            let workspace = self.inner.workspace.clone();
             let batch = tokio::task::spawn_blocking(move || {
                 harness_tools::cap_large_outputs(&workspace, &mut batch);
                 batch
@@ -445,7 +487,7 @@ impl TurnRunner {
             let first_result = messages.len();
             for (call, (_, result)) in completion.tool_calls.iter().zip(batch) {
                 // Redacted here, not just on persist, so the model never sees the key either.
-                let content = inner.redactor.apply(&result.content);
+                let content = self.inner.redactor.apply(&result.content);
                 self.emit(EventKind::ToolResponse {
                     thread_id: thread_id.clone(),
                     tool_call_id: call.id.clone(),
@@ -462,7 +504,121 @@ impl TurnRunner {
             }
             context_usage.prompt_tokens += compaction::estimate_tokens(&messages[first_result..]);
             // And again after the tool step, so the round trip is durable too.
-            self.snapshot_thread(session_id, &thread_id, &messages, &context_usage)?;
+            self.snapshot_thread(&shared.session_id, thread, messages, &context_usage)?;
+        }
+    }
+
+    /// Runs one round's calls, returning results in the calls' order. Host tools run in
+    /// parallel on blocking threads; `create_sub_agent` calls become child threads, and this
+    /// thread waits for all of them (only leaf threads run).
+    async fn run_tool_calls(
+        &self,
+        shared: &Arc<TurnShared>,
+        thread: &ThreadInfo,
+        calls: &[ToolCallResult],
+    ) -> Result<Vec<ToolResult>> {
+        let mut results: Vec<Option<ToolResult>> = vec![None; calls.len()];
+        let mut other = Vec::new();
+        let mut children = Vec::new();
+        for (index, call) in calls.iter().enumerate() {
+            match Builtin::find(&call.name, thread.is_root(), &self.inner.config.agent) {
+                Some(Builtin::CreateSubAgent) => match SubAgentRequest::parse(&call.arguments) {
+                    Ok(request) => children.push((index, request)),
+                    Err(message) => results[index] = Some(ToolResult::error(message)),
+                },
+                None => {
+                    let tools = Arc::clone(&shared.tools);
+                    let call = call.clone();
+                    other.push((
+                        index,
+                        tokio::spawn(async move { tools.call(&call.name, &call.arguments).await }),
+                    ));
+                }
+            }
+        }
+
+        if !children.is_empty() {
+            let permits = Arc::new(Semaphore::new(MAX_PARALLEL_SUB_AGENTS));
+            let mut running = JoinSet::new();
+            for (index, request) in children {
+                let child = self.clone().run_child(ChildSpec {
+                    shared: Arc::clone(shared),
+                    parent: thread.id.clone(),
+                    request,
+                    permits: Arc::clone(&permits),
+                });
+                running.spawn(async move { (index, child.await) });
+            }
+            while let Some(joined) = running.join_next().await {
+                let (index, result) = joined.context("subagent task panicked")?;
+                results[index] = Some(result);
+            }
+        }
+        for (index, handle) in other {
+            results[index] = Some(handle.await.context("tool call task panicked")?);
+        }
+        results
+            .into_iter()
+            .map(|result| result.ok_or_else(|| anyhow!("a tool call produced no result")))
+            .collect()
+    }
+
+    /// A subagent thread as a boxed future: it waits for a free slot, runs its own loop, and
+    /// resolves to the parent's tool result. Boxed because a thread's loop spawns these.
+    fn run_child(self, spec: ChildSpec) -> Pin<Box<dyn Future<Output = ToolResult> + Send>> {
+        Box::pin(async move {
+            let Ok(_permit) = spec.permits.acquire_owned().await else {
+                return ToolResult::error("subagent scheduler closed");
+            };
+            let thread = ThreadInfo {
+                id: new_id(),
+                parent: Some(spec.parent),
+                title: Some(spec.request.name),
+            };
+            let outcome = self
+                .run_child_thread(&spec.shared, &thread, spec.request.input)
+                .await;
+            let (result, error) = match outcome {
+                Ok(text) => (ToolResult::ok(text), None),
+                Err(e) => {
+                    let error = self.inner.redactor.apply(&format!("{e:#}"));
+                    (ToolResult::error(&error), Some(error))
+                }
+            };
+            // A store failure here must not lose the parent's result; the child is over anyway.
+            let _ = self
+                .emit(EventKind::ThreadDone {
+                    thread_id: thread.id,
+                    error,
+                })
+                .await;
+            result
+        })
+    }
+
+    async fn run_child_thread(
+        &self,
+        shared: &Arc<TurnShared>,
+        thread: &ThreadInfo,
+        input: String,
+    ) -> Result<String> {
+        self.emit(EventKind::ThreadCreated {
+            thread_id: thread.id.clone(),
+            parent: thread.parent.clone().unwrap_or_default(),
+            title: thread.title.clone().unwrap_or_default(),
+        })
+        .await?;
+        let mut messages = vec![
+            text_message(Role::System, shared.child_prompt.clone()),
+            text_message(Role::User, input),
+        ];
+        let mut usage = None;
+        match self
+            .run_thread(shared, thread, &mut messages, &mut usage, None)
+            .await?
+        {
+            ThreadEnd::Done(text) => Ok(text),
+            ThreadEnd::Cancelled => bail!("cancelled"),
         }
     }
 
@@ -471,17 +627,20 @@ impl TurnRunner {
     fn snapshot_thread(
         &self,
         session_id: &str,
-        thread_id: &str,
+        thread: &ThreadInfo,
         messages: &[Message],
         context_usage: &Usage,
     ) -> Result<()> {
         let history = &messages[1..];
-        let context_json = self.inner.redactor.apply(&serde_json::to_string(history)?);
+        let redactor = &self.inner.redactor;
+        let context_json = redactor.apply(&serde_json::to_string(history)?);
         let context_usage_json = serde_json::to_string(context_usage)?;
+        let title = thread.title.as_deref().map(|t| redactor.apply(t));
         self.inner.store.upsert_thread(&UpsertThread {
-            id: thread_id,
+            id: &thread.id,
             session_id,
-            parent_id: None,
+            parent_id: thread.parent.as_deref(),
+            title: title.as_deref(),
             context_json: &context_json,
             context_usage_json: Some(&context_usage_json),
         })?;
@@ -539,7 +698,52 @@ impl TurnRunner {
     }
 }
 
-/// Replaces the API key with `[REDACTED]` in anything the harness persists, and in tool results.
+/// What every thread of one turn shares.
+struct TurnShared {
+    session_id: String,
+    client: ChatClient,
+    /// The system prompt each subagent thread starts with.
+    child_prompt: String,
+    tools: Arc<TurnTools>,
+    threshold: u64,
+}
+
+/// A thread's identity: the root has no parent; a subagent names its parent and its title.
+struct ThreadInfo {
+    id: String,
+    parent: Option<String>,
+    title: Option<String>,
+}
+
+impl ThreadInfo {
+    fn is_root(&self) -> bool {
+        self.parent.is_none()
+    }
+}
+
+enum ThreadEnd {
+    /// The thread's final assistant text.
+    Done(String),
+    Cancelled,
+}
+
+struct ChildSpec {
+    shared: Arc<TurnShared>,
+    parent: String,
+    request: SubAgentRequest,
+    permits: Arc<Semaphore>,
+}
+
+fn text_message(role: Role, content: String) -> Message {
+    Message {
+        role,
+        content,
+        tool_calls: Vec::new(),
+        tool_call_id: None,
+    }
+}
+
+/// Replaces the API key with `[REDACTED]` in persisted data and tool results.
 struct Redactor {
     /// The key as it appears inside a JSON string, which covers plain text too.
     needle: String,

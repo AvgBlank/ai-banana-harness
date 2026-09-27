@@ -110,6 +110,7 @@ impl TurnTools {
         workspace: PathBuf,
         tools_config: ToolsConfig,
         permission: PermissionConfig,
+        builtin_definitions: &[ToolDefinition],
     ) -> Self {
         let mut definitions = Vec::new();
         let mut routes = HashMap::new();
@@ -133,6 +134,9 @@ impl TurnTools {
                     parameters: strip_schema(&meta.parameters()),
                 });
             }
+        }
+        for builtin in builtin_definitions {
+            used.insert(builtin.name.clone());
         }
         for (server, tool) in mcp.preloaded_tools().await {
             let name = sanitize_name(&tool.name, &mut used);

@@ -82,6 +82,10 @@ name: demo-skill\n\
 description: A demo skill for the golden snapshot test.\n\
 </skill>\n\
 </skills>\n\
+\n\
+<sub-agents>\n\
+The Agent can delegate an independent, well-defined subtask to another agent with the create_sub_agent tool. Up to five subagents run in parallel. A subagent has the Agent's tools but no create_sub_agent or question tool of its own, and its final answer becomes the Agent's tool result.\n\
+</sub-agents>\n\
 </agent-capabilities>\n\
 \n\
 <user-instructions><![CDATA[\n\

@@ -15,7 +15,10 @@ use syntect::easy::HighlightLines;
 use syntect::highlighting::{Theme, ThemeSet};
 use syntect::parsing::SyntaxSet;
 
-use crate::app::{App, MainState, Overlay, Screen, StartupState, ToolCallItem, TranscriptItem};
+use crate::app::{
+    App, MainState, Overlay, Screen, StartupState, SubagentCard, SubagentStatus, ToolCallItem,
+    TranscriptItem,
+};
 use crate::theme;
 
 pub fn draw(frame: &mut Frame, app: &App) {
@@ -162,34 +165,7 @@ fn draw_sessions(frame: &mut Frame, sessions: &[harness_core::Session], selected
 fn draw_transcript<'a>(frame: &mut Frame, state: &'a MainState, area: Rect) {
     let mut lines: Vec<Line<'a>> = Vec::new();
     for item in &state.transcript {
-        match item {
-            TranscriptItem::User(text) => {
-                lines.push(Line::from("You").style(theme::accent_bold()));
-                for line in text.lines() {
-                    lines.push(Line::from(line.to_string()));
-                }
-                lines.push(Line::from(""));
-            }
-            TranscriptItem::Assistant(message) => {
-                lines.push(Line::from(APP_NAME).style(theme::accent_bold()));
-                // Only this message's text is parsed as markdown; earlier items are untouched.
-                lines.extend(tui_markdown::from_str(&message.content).lines);
-                if let Some(error) = &message.error {
-                    lines.push(Line::from(format!("✗ {error}")).style(theme::error()));
-                }
-                lines.push(Line::from(""));
-            }
-            TranscriptItem::Tool(call) => {
-                lines.push(tool_card_line(call));
-                if call.expanded {
-                    lines.extend(expanded_card_lines(call));
-                }
-            }
-            TranscriptItem::System(text) => {
-                lines.push(Line::from(format!("· {text}")).style(theme::muted()));
-                lines.push(Line::from(""));
-            }
-        }
+        push_item_lines(&mut lines, item);
     }
     if let Some(error) = &state.last_error {
         lines.push(Line::from(format!("✗ {error}")).style(theme::error()));
@@ -203,6 +179,63 @@ fn draw_transcript<'a>(frame: &mut Frame, state: &'a MainState, area: Rect) {
         .block(block)
         .wrap(Wrap { trim: false });
     frame.render_widget(paragraph, area);
+}
+
+fn push_item_lines<'a>(lines: &mut Vec<Line<'a>>, item: &'a TranscriptItem) {
+    match item {
+        TranscriptItem::User(text) => {
+            lines.push(Line::from("You").style(theme::accent_bold()));
+            for line in text.lines() {
+                lines.push(Line::from(line.to_string()));
+            }
+            lines.push(Line::from(""));
+        }
+        TranscriptItem::Assistant(message) => {
+            lines.push(Line::from(APP_NAME).style(theme::accent_bold()));
+            // Only this message's text is parsed as markdown; earlier items are untouched.
+            lines.extend(tui_markdown::from_str(&message.content).lines);
+            if let Some(error) = &message.error {
+                lines.push(Line::from(format!("✗ {error}")).style(theme::error()));
+            }
+            lines.push(Line::from(""));
+        }
+        TranscriptItem::Tool(call) => {
+            lines.push(tool_card_line(call));
+            if call.expanded {
+                lines.extend(expanded_card_lines(call));
+            }
+        }
+        TranscriptItem::System(text) => {
+            lines.push(Line::from(format!("· {text}")).style(theme::muted()));
+            lines.push(Line::from(""));
+        }
+        TranscriptItem::Subagent(card) => push_subagent_lines(lines, card),
+    }
+}
+
+/// A subagent card: a header with its status, then the child's own items indented under a
+/// rule, so parallel work reads as nested inside the parent's transcript.
+fn push_subagent_lines<'a>(lines: &mut Vec<Line<'a>>, card: &'a SubagentCard) {
+    let status = match &card.status {
+        SubagentStatus::Running => Span::styled("running…", theme::muted()),
+        SubagentStatus::Done => Span::styled("done", theme::muted()),
+        SubagentStatus::Error(error) => Span::styled(format!("✗ {error}"), theme::error()),
+    };
+    lines.push(Line::from(vec![
+        Span::raw("◆ "),
+        Span::styled(format!("subagent {}", card.title), theme::accent_bold()),
+        Span::raw(" "),
+        status,
+    ]));
+    let mut nested = Vec::new();
+    for item in &card.items {
+        push_item_lines(&mut nested, item);
+    }
+    for mut line in nested {
+        line.spans.insert(0, Span::styled("┊ ", theme::muted()));
+        lines.push(line);
+    }
+    lines.push(Line::from(""));
 }
 
 fn draw_input(frame: &mut Frame, state: &MainState, area: Rect) {

@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, bail};
 use etcetera::BaseStrategy;
 
+mod builtins;
 mod compaction;
 mod config;
 mod event;

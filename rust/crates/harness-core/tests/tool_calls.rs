@@ -128,7 +128,15 @@ async fn reads_a_file_in_the_workspace_and_then_answers() {
         .collect();
     assert_eq!(
         tool_names,
-        HashSet::from(["read_file", "write_file", "edit", "glob", "grep", "bash"])
+        HashSet::from([
+            "read_file",
+            "write_file",
+            "edit",
+            "glob",
+            "grep",
+            "bash",
+            "create_sub_agent",
+        ])
     );
     for tool in tools {
         assert_eq!(tool["type"], "function");

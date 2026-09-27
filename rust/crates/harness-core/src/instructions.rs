@@ -61,7 +61,7 @@ pub struct SystemPromptInput<'a> {
     pub subagents_enabled: bool,
     /// MCP servers behind the deferred meta-tools: name and configured description.
     pub deferred_mcp_servers: &'a [(&'a str, Option<&'a str>)],
-    /// `true` for the turn's root thread; `false` for a subagent thread (ticket 07).
+    /// `true` for the turn's root thread; `false` for a subagent thread.
     pub root: bool,
 }
 

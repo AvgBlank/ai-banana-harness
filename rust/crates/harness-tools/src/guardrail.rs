@@ -110,7 +110,8 @@ pub(crate) struct InternalPath<'a> {
 
 /// Resolves an internal output path while keeping it inside the workspace.
 pub(crate) fn confine(path: InternalPath<'_>) -> Result<PathBuf, String> {
-    let workspace = path.workspace
+    let workspace = path
+        .workspace
         .canonicalize()
         .map_err(|_| CONFINEMENT.to_string())?;
     let resolved = resolve(&workspace, path.requested).ok_or_else(|| CONFINEMENT.to_string())?;
