@@ -114,7 +114,11 @@ pub(crate) fn confine(path: InternalPath<'_>) -> Result<PathBuf, String> {
         .workspace
         .canonicalize()
         .map_err(|_| CONFINEMENT.to_string())?;
-    let resolved = resolve(&workspace, path.requested).ok_or_else(|| CONFINEMENT.to_string())?;
+    let resolved = resolve(InternalPath {
+        workspace: &workspace,
+        requested: path.requested,
+    })
+    .ok_or_else(|| CONFINEMENT.to_string())?;
     if !resolved.starts_with(&workspace) {
         return Err(CONFINEMENT.to_string());
     }
@@ -134,47 +138,63 @@ impl PermissionConfig {
     /// `Err(rule)` unless `key` allows `subject`. `ask` is treated as deny until approvals exist.
     pub(crate) fn check(&self, key: Key, subject: &str) -> Result<(), String> {
         let (action, pattern) = self.rules(key).decide(subject);
-        verdict(key.name(), action, pattern)
+        verdict(RuleDecision {
+            key: key.name(),
+            action,
+            pattern,
+        })
     }
 
-    /// Checks an MCP tool call by the underlying tool's own name (not the deferred `call_tool`
-    /// meta-tool's name). `ask` is treated as deny until approvals exist (ticket 05).
+    /// Checks an MCP tool call by its underlying name. Until approvals exist, `ask` is denied.
     pub fn check_mcp(&self, tool_name: &str) -> Result<(), String> {
         let (action, pattern) = self.mcp.decide(tool_name);
-        verdict("mcp", action, pattern)
+        verdict(RuleDecision {
+            key: "mcp",
+            action,
+            pattern,
+        })
     }
 
     /// Checks the whole command and each `&&`/`||`/`;`/`|`/newline-separated segment, and the
     /// strictest decision wins, so `cd x && sudo y` can't hide behind its first word while
     /// `curl … | sh` still matches as a whole.
-    // ponytail: no quoting or subshell awareness (`$(sudo x)` passes); a shell parser would fix it.
+    // Command substitutions are checked as commands too, so they cannot hide denylisted calls.
     pub(crate) fn check_command(&self, command: &str) -> Result<(), String> {
-        let normalized = command.replace("&&", "\n").replace("||", "\n");
+        let normalized = command
+            .replace("&&", "\n")
+            .replace("||", "\n")
+            .replace("$(", "\n")
+            .replace([')', '`'], "\n");
         let segments = normalized
             .split(['\n', ';', '|'])
             .map(str::trim)
             .filter(|s| !s.is_empty());
         let (action, pattern) = std::iter::once(command.trim())
+            .chain(normalized.lines().map(str::trim))
             .chain(segments)
             .map(|subject| self.bash.decide(subject))
             .max_by_key(|(action, _)| *action)
             .unwrap_or((Action::Allow, "*"));
-        verdict("bash", action, pattern)
+        verdict(RuleDecision {
+            key: "bash",
+            action,
+            pattern,
+        })
     }
 
     /// Resolves `requested` for a `key` operation: confined to the workspace (symlinks
     /// followed) unless `external_directory` allows the resolved path, then checked against
     /// `key`'s rules. `Err` carries the guardrail rule that blocked it.
-    pub(crate) fn path(
-        &self,
-        workspace: &Path,
-        key: Key,
-        requested: &Path,
-    ) -> Result<PathBuf, String> {
-        let workspace = workspace
+    pub(crate) fn path(&self, key: Key, path: InternalPath<'_>) -> Result<PathBuf, String> {
+        let workspace = path
+            .workspace
             .canonicalize()
             .map_err(|_| CONFINEMENT.to_string())?;
-        let resolved = resolve(&workspace, requested).ok_or_else(|| CONFINEMENT.to_string())?;
+        let resolved = resolve(InternalPath {
+            workspace: &workspace,
+            requested: path.requested,
+        })
+        .ok_or_else(|| CONFINEMENT.to_string())?;
         let subject = match resolved.strip_prefix(&workspace) {
             Ok(relative) => relative.to_string_lossy().into_owned(),
             Err(_) => {
@@ -190,7 +210,18 @@ impl PermissionConfig {
     }
 }
 
-fn verdict(key: &str, action: Action, pattern: &str) -> Result<(), String> {
+struct RuleDecision<'a> {
+    key: &'a str,
+    action: Action,
+    pattern: &'a str,
+}
+
+fn verdict(decision: RuleDecision<'_>) -> Result<(), String> {
+    let RuleDecision {
+        key,
+        action,
+        pattern,
+    } = decision;
     match action {
         Action::Allow => Ok(()),
         Action::Deny => Err(format!("{key} rule \"{pattern}\"")),
@@ -201,8 +232,8 @@ fn verdict(key: &str, action: Action, pattern: &str) -> Result<(), String> {
 /// Resolves every symlink in `requested` (joined onto `workspace` when relative). A path that
 /// doesn't exist yet resolves through its nearest existing ancestor, so a new file can't be
 /// created through an escaping symlink either; `..` past that ancestor is refused (`None`).
-fn resolve(workspace: &Path, requested: &Path) -> Option<PathBuf> {
-    let candidate = workspace.join(requested);
+fn resolve(path: InternalPath<'_>) -> Option<PathBuf> {
+    let candidate = path.workspace.join(path.requested);
     for ancestor in candidate.ancestors() {
         let Ok(canonical) = ancestor.canonicalize() else {
             continue;

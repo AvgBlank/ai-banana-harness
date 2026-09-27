@@ -6,12 +6,18 @@ use std::sync::Arc;
 
 use harness_llm::ToolDefinition;
 use harness_tools::{
-    PermissionConfig, ToolContext, ToolResult, ToolsConfig, sanitize_name, strip_schema,
+    HostToolRequest, PermissionConfig, ToolContext, ToolResult, ToolsConfig, sanitize_name,
+    strip_schema,
 };
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
-use crate::mcp::McpRegistry;
+use crate::mcp::{McpRegistry, McpTarget};
+
+pub(crate) struct ToolInvocation<'a> {
+    pub name: &'a str,
+    pub arguments_json: &'a str,
+}
 
 /// Where a tool call goes. Closed set, dispatched by `match`.
 #[derive(Clone, Debug)]
@@ -163,7 +169,11 @@ impl TurnTools {
         }
     }
 
-    pub(crate) async fn call(&self, name: &str, arguments_json: &str) -> ToolResult {
+    pub(crate) async fn call(&self, invocation: ToolInvocation<'_>) -> ToolResult {
+        let ToolInvocation {
+            name,
+            arguments_json,
+        } = invocation;
         match self.routes.get(name) {
             // An unknown name goes to the host tools, which report it as unknown.
             None | Some(ToolSource::Host) => {
@@ -182,7 +192,13 @@ impl TurnTools {
                         permission: &permission,
                         hidden_env: &[crate::API_KEY_ENV],
                     };
-                    harness_tools::call_by_name(&ctx, &name, &arguments)
+                    harness_tools::call_by_name(
+                        &ctx,
+                        HostToolRequest {
+                            name: &name,
+                            arguments_json: &arguments,
+                        },
+                    )
                 })
                 .await
                 .unwrap_or_else(|e| ToolResult::error(format!("tool task failed: {e}")))
@@ -190,7 +206,7 @@ impl TurnTools {
             Some(ToolSource::Mcp { server, tool }) => {
                 // Bad or empty JSON becomes `{}`, and the server validates what it gets.
                 let arguments = serde_json::from_str(arguments_json).unwrap_or_default();
-                self.mcp.call(server, tool, arguments).await
+                self.mcp.call(McpTarget { server, tool }, arguments).await
             }
             Some(ToolSource::Deferred(meta)) => {
                 let args: MetaArgs = match serde_json::from_str(arguments_json) {
@@ -200,11 +216,22 @@ impl TurnTools {
                 match meta {
                     MetaTool::ListTools => self.mcp.list_tools(&args.mcp_server).await,
                     MetaTool::GetToolInfo => {
-                        self.mcp.tool_info(&args.mcp_server, &args.tool_name).await
+                        self.mcp
+                            .tool_info(McpTarget {
+                                server: &args.mcp_server,
+                                tool: &args.tool_name,
+                            })
+                            .await
                     }
                     MetaTool::CallTool => {
                         self.mcp
-                            .call(&args.mcp_server, &args.tool_name, args.input)
+                            .call(
+                                McpTarget {
+                                    server: &args.mcp_server,
+                                    tool: &args.tool_name,
+                                },
+                                args.input,
+                            )
                             .await
                     }
                 }

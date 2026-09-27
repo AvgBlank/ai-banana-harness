@@ -1049,6 +1049,7 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+ "similar",
  "tempfile",
 ]
 
@@ -1062,7 +1063,6 @@ dependencies = [
  "harness-core",
  "ratatui",
  "serde_json",
- "similar",
  "syntect",
  "tokio",
  "tui-markdown",

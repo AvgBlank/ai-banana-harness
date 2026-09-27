@@ -31,10 +31,9 @@ mod tests {
     use super::{glob_match, last_match};
     use crate::Action::{self, Allow, Ask, Deny};
 
-    // Table-driven per the ticket's one permitted seam exception: the guardrail pattern
-    // matcher's combinatorics, not tool behaviour.
+    // The permitted matcher exception covers glob matching and rule precedence.
     #[test]
-    fn combinatorics() {
+    fn matcher_combinatorics() {
         let cases: &[(&str, &str, bool)] = &[
             (".env*", ".env", true),
             (".env*", ".env.local", true),
@@ -63,11 +62,7 @@ mod tests {
                 "glob_match({pattern:?}, {text:?})"
             );
         }
-    }
-
-    // Same permitted exception: last-match-wins across mixed allow/ask/deny rules.
-    #[test]
-    fn last_match_wins() {
+        // Later rules override earlier ones across mixed allow/ask/deny rules.
         let rules: Vec<(String, Action)> = [
             ("*", Allow),
             ("git *", Ask),

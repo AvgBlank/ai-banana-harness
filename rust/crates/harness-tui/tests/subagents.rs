@@ -75,6 +75,7 @@ fn a_subagent_card_renders_under_its_parent_with_the_childs_own_work_nested() {
         tool_call_id: "call_c".to_string(),
         content: "apples.txt".to_string(),
         blocked: false,
+        diff: None,
     });
     events.extend(message("child", "m2", "Three apples."));
     events.push(EventKind::ThreadDone {
@@ -86,6 +87,7 @@ fn a_subagent_card_renders_under_its_parent_with_the_childs_own_work_nested() {
         tool_call_id: "call_a".to_string(),
         content: "Three apples.".to_string(),
         blocked: false,
+        diff: None,
     });
     events.extend(message("root", "m3", "There are three apples."));
     events.push(EventKind::TurnDone {

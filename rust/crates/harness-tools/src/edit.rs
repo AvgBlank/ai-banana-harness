@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use crate::guardrail::Key;
-use crate::{ToolContext, ToolResult};
+use crate::{FileDiffInput, ToolContext, ToolResult, file_diff};
 
 pub const DESCRIPTION: &str = "Replace `old_string` with `new_string` in a workspace file. `old_string` must match \
 the file exactly (whitespace included) and exactly once, unless `replace_all` is true; add surrounding lines \
@@ -57,8 +57,16 @@ pub fn call(ctx: &ToolContext<'_>, arguments: &Value) -> ToolResult {
         ));
     }
     let updated = content.replace(old, new);
-    match std::fs::write(&resolved, updated) {
-        Ok(()) => ToolResult::ok(format!("Edited {path}: replaced {count} occurrence(s)")),
+    match std::fs::write(&resolved, &updated) {
+        Ok(()) => {
+            let mut result =
+                ToolResult::ok(format!("Edited {path}: replaced {count} occurrence(s)"));
+            result.diff = file_diff(FileDiffInput {
+                before: &content,
+                after: &updated,
+            });
+            result
+        }
         Err(e) => ToolResult::error(format!("writing {}: {e}", resolved.display())),
     }
 }

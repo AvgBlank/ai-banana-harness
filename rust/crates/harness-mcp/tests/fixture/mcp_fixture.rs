@@ -87,7 +87,11 @@ fn tools() -> Vec<Value> {
             "Echoes its text.",
             json!({ "text": { "type": "string" } }),
         ),
-        tool("fail", "Always fails.", json!({})),
+        tool(
+            "fail",
+            "Always fails.",
+            json!({ "bytes": { "type": "integer" } }),
+        ),
         tool("structured", "Returns structured content.", json!({})),
         tool(
             "env",
@@ -107,7 +111,15 @@ fn call(id: Value, params: &Value) -> Value {
             format!("echo: {}", args["text"].as_str().unwrap_or_default()),
             false,
         ),
-        "fail" => text("fixture failure".to_string(), true),
+        "fail" => {
+            let bytes = args["bytes"].as_u64().unwrap_or(0);
+            let message = if bytes == 0 {
+                "fixture failure".to_string()
+            } else {
+                "x".repeat(bytes.min(100_000) as usize)
+            };
+            text(message, true)
+        }
         "structured" => json!({
             "content": [{ "type": "text", "text": "{\"answer\":42}" }],
             "structuredContent": { "answer": 42 },

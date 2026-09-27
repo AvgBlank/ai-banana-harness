@@ -245,6 +245,32 @@ async fn a_huge_tool_result_is_spilled_to_a_file_and_the_model_gets_its_path_and
 }
 
 #[tokio::test]
+async fn a_spilled_result_redacts_the_api_key_before_writing_the_file() {
+    let t = TestHarness::open(Provider::DeepSeek).await;
+    let source = format!("{}{}", "a".repeat(30_000), common::TEST_API_KEY);
+    std::fs::write(t.workspace.join("big.txt"), &source).unwrap();
+    push_calls(&t, &[read_call("call_1", "big.txt")], 50);
+    t.provider.push_sse(answer_sse("Done.", 100, 5));
+
+    let (_, events) = t.run_turn("read big.txt").await;
+    assert_done(&events);
+    let responses = tool_responses(&events);
+    let expected = format!("{:>6}\t{}[REDACTED]", 1, "a".repeat(30_000));
+    let path = assert_spilled(&t, &responses[0], &expected);
+    assert!(
+        !std::fs::read_to_string(t.workspace.join(path))
+            .unwrap()
+            .contains(common::TEST_API_KEY)
+    );
+    assert!(
+        !t.provider.requests()[1]
+            .body
+            .to_string()
+            .contains(common::TEST_API_KEY)
+    );
+}
+
+#[tokio::test]
 async fn a_spill_leaves_git_status_clean_apart_from_the_agents_own_changes() {
     let t = TestHarness::open(Provider::DeepSeek).await;
     write_sized(&t, "big.txt", 40_000);

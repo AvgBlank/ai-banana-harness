@@ -11,7 +11,6 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Clear, Padding, Paragraph, Wrap};
 use serde_json::Value;
-use similar::{ChangeTag, TextDiff};
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Theme, ThemeSet};
 use syntect::parsing::SyntaxSet;
@@ -649,17 +648,24 @@ fn expanded_card_lines(call: &ToolCallItem) -> Vec<Line<'static>> {
     let arguments: Value = serde_json::from_str(&call.arguments).unwrap_or(Value::Null);
     let text = |key| arguments.get(key).and_then(Value::as_str).unwrap_or("");
     match call.name.as_str() {
-        "edit" => diff_lines(text("path"), text("old_string"), text("new_string")),
-        // The prior content isn't known here, so a write shows as all additions.
-        "write_file" => diff_lines(text("path"), "", text("content")),
+        "edit" | "write_file" => diff_lines(call),
         "bash" => bash_lines(text("command"), call),
         _ => Vec::new(),
     }
 }
 
-/// A line diff, each line syntax-highlighted for `path`'s language on a red/green row tint.
+/// The tool's actual file diff, syntax-highlighted for the path's language.
 // ponytail: re-highlighted on every redraw; cache per card if big diffs make frames slow.
-fn diff_lines(path: &str, old: &str, new: &str) -> Vec<Line<'static>> {
+fn diff_lines(call: &ToolCallItem) -> Vec<Line<'static>> {
+    let Some(diff) = call
+        .outcome
+        .as_ref()
+        .and_then(|outcome| outcome.diff.as_deref())
+    else {
+        return Vec::new();
+    };
+    let arguments: Value = serde_json::from_str(&call.arguments).unwrap_or(Value::Null);
+    let path = arguments.get("path").and_then(Value::as_str).unwrap_or("");
     let syntax = Path::new(path)
         .extension()
         .and_then(|ext| ext.to_str())
@@ -668,20 +674,32 @@ fn diff_lines(path: &str, old: &str, new: &str) -> Vec<Line<'static>> {
     let mut highlighter = SYNTAX_THEME
         .as_ref()
         .map(|theme| HighlightLines::new(syntax, theme));
-    TextDiff::from_lines(old, new)
-        .iter_all_changes()
-        .map(|change| {
-            let (sign, row) = match change.tag() {
-                ChangeTag::Delete => ("- ", Style::new().bg(theme::diff_removed_bg())),
-                ChangeTag::Insert => ("+ ", Style::new().bg(theme::diff_added_bg())),
-                ChangeTag::Equal => ("  ", Style::new()),
+    diff.lines()
+        .skip(2)
+        .map(|line| {
+            if line.starts_with("@@") || line.starts_with('\\') {
+                return Line::from(format!("    {line}")).style(theme::muted());
+            }
+            let (sign, value, row, sign_style) = match line.chars().next() {
+                Some('-') => (
+                    "- ",
+                    &line[1..],
+                    Style::new().bg(theme::diff_removed_bg()),
+                    theme::error(),
+                ),
+                Some('+') => (
+                    "+ ",
+                    &line[1..],
+                    Style::new().bg(theme::diff_added_bg()),
+                    theme::success(),
+                ),
+                _ => (
+                    "  ",
+                    line.strip_prefix(' ').unwrap_or(line),
+                    Style::new(),
+                    theme::muted(),
+                ),
             };
-            let sign_style = match change.tag() {
-                ChangeTag::Delete => theme::error(),
-                ChangeTag::Insert => theme::success(),
-                ChangeTag::Equal => theme::muted(),
-            };
-            let value = change.value();
             let mut spans = vec![Span::raw("    "), Span::styled(sign, sign_style.patch(row))];
             let highlighted = highlighter
                 .as_mut()

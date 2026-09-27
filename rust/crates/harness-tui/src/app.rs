@@ -154,6 +154,7 @@ impl ToolCallItem {
 pub struct ToolOutcome {
     pub content: String,
     pub blocked: bool,
+    pub diff: Option<String>,
 }
 
 impl App {
@@ -482,7 +483,13 @@ fn apply_thread_event(items: &mut Vec<TranscriptItem>, kind: EventKind) {
             message_id,
             content,
         } => {
-            if let Some(message) = assistant_message_mut(items, &thread_id, &message_id) {
+            if let Some(message) = assistant_message_mut(
+                items,
+                MessageKey {
+                    thread_id: &thread_id,
+                    message_id: &message_id,
+                },
+            ) {
                 message.content.push_str(&content);
             }
         }
@@ -491,7 +498,13 @@ fn apply_thread_event(items: &mut Vec<TranscriptItem>, kind: EventKind) {
             message_id,
             message: Some(output),
         } => {
-            if let Some(message) = assistant_message_mut(items, &thread_id, &message_id) {
+            if let Some(message) = assistant_message_mut(
+                items,
+                MessageKey {
+                    thread_id: &thread_id,
+                    message_id: &message_id,
+                },
+            ) {
                 message.content = output.content;
             }
         }
@@ -513,10 +526,15 @@ fn apply_thread_event(items: &mut Vec<TranscriptItem>, kind: EventKind) {
             tool_call_id,
             content,
             blocked,
+            diff,
             ..
         } => {
             if let Some(call) = tool_call_mut(items, &tool_call_id) {
-                call.outcome = Some(ToolOutcome { content, blocked });
+                call.outcome = Some(ToolOutcome {
+                    content,
+                    blocked,
+                    diff,
+                });
             }
         }
         EventKind::ContextCompacted { .. } => {
@@ -529,14 +547,18 @@ fn apply_thread_event(items: &mut Vec<TranscriptItem>, kind: EventKind) {
     }
 }
 
+struct MessageKey<'a> {
+    thread_id: &'a str,
+    message_id: &'a str,
+}
+
 fn assistant_message_mut<'a>(
     items: &'a mut [TranscriptItem],
-    thread_id: &str,
-    message_id: &str,
+    key: MessageKey<'_>,
 ) -> Option<&'a mut AssistantMessage> {
     items.iter_mut().rev().find_map(|item| match item {
         TranscriptItem::Assistant(message)
-            if message.thread_id == thread_id && message.message_id == message_id =>
+            if message.thread_id == key.thread_id && message.message_id == key.message_id =>
         {
             Some(message)
         }

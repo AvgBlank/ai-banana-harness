@@ -29,6 +29,11 @@ pub enum McpServerState {
     Failed(String),
 }
 
+pub(crate) struct McpTarget<'a> {
+    pub server: &'a str,
+    pub tool: &'a str,
+}
+
 pub(crate) struct McpRegistry {
     servers: BTreeMap<String, Server>,
     permission: PermissionConfig,
@@ -133,12 +138,12 @@ impl McpRegistry {
     }
 
     /// A tool's description and input schema, as `get_tool_info` returns them.
-    pub(crate) async fn tool_info(&self, server: &str, tool: &str) -> ToolResult {
-        let connection = match self.connection(server).await {
+    pub(crate) async fn tool_info(&self, target: McpTarget<'_>) -> ToolResult {
+        let connection = match self.connection(target.server).await {
             Ok(connection) => connection,
             Err(e) => return ToolResult::error(format!("{e:#}")),
         };
-        match connection.tools.iter().find(|t| t.name == tool) {
+        match connection.tools.iter().find(|t| t.name == target.tool) {
             Some(found) => ToolResult::ok(
                 serde_json::json!({
                     "description": found.description,
@@ -146,7 +151,10 @@ impl McpRegistry {
                 })
                 .to_string(),
             ),
-            None => ToolResult::error(format!("Tool '{tool}' not found on server '{server}'")),
+            None => ToolResult::error(format!(
+                "Tool '{}' not found on server '{}'",
+                target.tool, target.server
+            )),
         }
     }
 
@@ -154,18 +162,18 @@ impl McpRegistry {
     /// never starts the server.
     pub(crate) async fn call(
         &self,
-        server: &str,
-        tool: &str,
+        target: McpTarget<'_>,
         arguments: Map<String, Value>,
     ) -> ToolResult {
-        if let Err(rule) = self.permission.check_mcp(tool) {
+        if let Err(rule) = self.permission.check_mcp(target.tool) {
             return ToolResult::blocked(&rule);
         }
-        let connection = match self.connection(server).await {
+        let connection = match self.connection(target.server).await {
             Ok(connection) => connection,
             Err(e) => return ToolResult::error(format!("{e:#}")),
         };
-        match connection.client.call_tool(tool, arguments).await {
+        match connection.client.call_tool(target.tool, arguments).await {
+            Ok(outcome) if outcome.is_error => ToolResult::failure(outcome.content),
             Ok(outcome) => ToolResult::ok(outcome.content),
             Err(e) => ToolResult::error(format!("{e:#}")),
         }

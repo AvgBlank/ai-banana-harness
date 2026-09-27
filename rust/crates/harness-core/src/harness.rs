@@ -23,7 +23,7 @@ use crate::event::{Event, EventKind, ModelOutput, TurnState};
 use crate::instructions::{SystemPromptInput, system_prompt};
 use crate::mcp::{McpRegistry, McpServerStatus};
 use crate::skills::load_skills;
-use crate::tools::TurnTools;
+use crate::tools::{ToolInvocation, TurnTools};
 
 /// The setting key that stores the provider last chosen, read back to preselect the startup
 /// popup and updated whenever `/provider` switches a session.
@@ -474,7 +474,11 @@ impl TurnRunner {
                 .tool_calls
                 .iter()
                 .zip(results)
-                .map(|(call, result)| (call.name.clone(), result))
+                .map(|(call, mut result)| {
+                    // Spill files are durable, so redact before large-output handling writes one.
+                    result.content = self.inner.redactor.apply(&result.content);
+                    (self.inner.redactor.apply(&call.name), result)
+                })
                 .collect();
             let workspace = self.inner.workspace.clone();
             let subagents_enabled = self.inner.config.agent.subagents;
@@ -494,6 +498,7 @@ impl TurnRunner {
                     tool_call_id: call.id.clone(),
                     content: content.clone(),
                     blocked: result.blocked,
+                    diff: result.diff.map(|diff| self.inner.redactor.apply(&diff)),
                 })
                 .await?;
                 messages.push(Message {
@@ -532,7 +537,14 @@ impl TurnRunner {
                     let call = call.clone();
                     other.push((
                         index,
-                        tokio::spawn(async move { tools.call(&call.name, &call.arguments).await }),
+                        tokio::spawn(async move {
+                            tools
+                                .call(ToolInvocation {
+                                    name: &call.name,
+                                    arguments_json: &call.arguments,
+                                })
+                                .await
+                        }),
                     ));
                 }
             }

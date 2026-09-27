@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 use serde_json::Value;
+use similar::TextDiff;
 
 pub use guardrail::{Action, PermissionConfig, Rules};
 
@@ -44,7 +45,13 @@ impl ToolContext<'_> {
     /// A path argument resolved and permitted for `key`, or the blocked result to return.
     fn path(&self, key: guardrail::Key, requested: &str) -> Result<PathBuf, ToolResult> {
         self.permission
-            .path(self.workspace, key, Path::new(requested))
+            .path(
+                key,
+                guardrail::InternalPath {
+                    workspace: self.workspace,
+                    requested: Path::new(requested),
+                },
+            )
             .map_err(|rule| ToolResult::blocked(&rule))
     }
 }
@@ -130,6 +137,8 @@ pub struct ToolResult {
     pub content: String,
     pub blocked: bool,
     pub failed: bool,
+    /// A successful file change's actual before/after diff, for display only.
+    pub diff: Option<String>,
 }
 
 impl ToolResult {
@@ -138,6 +147,17 @@ impl ToolResult {
             content: content.into(),
             blocked: false,
             failed: false,
+            diff: None,
+        }
+    }
+
+    /// An already-rendered tool failure, such as an MCP error result.
+    pub fn failure(content: impl Into<String>) -> Self {
+        Self {
+            content: content.into(),
+            blocked: false,
+            failed: true,
+            diff: None,
         }
     }
 
@@ -148,6 +168,7 @@ impl ToolResult {
             content: serde_json::json!({ "error": message.as_ref() }).to_string(),
             blocked: false,
             failed: true,
+            diff: None,
         }
     }
 
@@ -158,14 +179,42 @@ impl ToolResult {
             content: format!("Blocked by guardrail: {rule}"),
             blocked: true,
             failed: true,
+            diff: None,
         }
     }
+}
+
+pub(crate) struct FileDiffInput<'a> {
+    pub before: &'a str,
+    pub after: &'a str,
+}
+
+/// A display diff made from the contents on disk, with a small amount of unchanged context.
+pub(crate) fn file_diff(input: FileDiffInput<'_>) -> Option<String> {
+    if input.before == input.after {
+        return None;
+    }
+    Some(
+        TextDiff::from_lines(input.before, input.after)
+            .unified_diff()
+            .header("before", "after")
+            .to_string(),
+    )
 }
 
 /// Looks a tool up by (possibly sanitised) name and runs it, or reports it as unknown. The one
 /// entry point a caller needs; it owns the closed-set dispatch so callers never match on
 /// [`HostTool`] themselves.
-pub fn call_by_name(ctx: &ToolContext<'_>, name: &str, arguments_json: &str) -> ToolResult {
+pub struct HostToolRequest<'a> {
+    pub name: &'a str,
+    pub arguments_json: &'a str,
+}
+
+pub fn call_by_name(ctx: &ToolContext<'_>, request: HostToolRequest<'_>) -> ToolResult {
+    let HostToolRequest {
+        name,
+        arguments_json,
+    } = request;
     let Some(tool) = HostTool::from_name(name) else {
         return ToolResult::error(format!("unknown tool \"{name}\""));
     };

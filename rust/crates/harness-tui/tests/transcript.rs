@@ -85,6 +85,7 @@ fn a_tool_call_renders_as_a_collapsed_one_line_card() {
         tool_call_id: "call_1".to_string(),
         content: "     1\thello world".to_string(),
         blocked: false,
+        diff: None,
     }));
 
     let view = rendered(&app);
@@ -109,6 +110,7 @@ fn a_blocked_tool_call_gets_a_red_badge() {
         tool_call_id: "call_1".to_string(),
         content: "Blocked by guardrail: workspace confinement".to_string(),
         blocked: true,
+        diff: None,
     }));
 
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
@@ -138,18 +140,26 @@ fn the_status_line_shows_a_spinner_while_a_turn_runs() {
     assert!(view.contains("Ctrl+C to cancel"), "{view}");
 }
 
-fn tool_card(main: &mut harness_tui::app::MainState, name: &str, arguments: &str, content: &str) {
+struct CardInput<'a> {
+    name: &'a str,
+    arguments: &'a str,
+    content: &'a str,
+    diff: Option<&'a str>,
+}
+
+fn tool_card(main: &mut harness_tui::app::MainState, card: CardInput<'_>) {
     main.apply_event(event(EventKind::ToolCall {
         thread_id: "thread".to_string(),
-        tool_call_id: format!("call_{name}"),
-        name: name.to_string(),
-        arguments: arguments.to_string(),
+        tool_call_id: format!("call_{}", card.name),
+        name: card.name.to_string(),
+        arguments: card.arguments.to_string(),
     }));
     main.apply_event(event(EventKind::ToolResponse {
         thread_id: "thread".to_string(),
-        tool_call_id: format!("call_{name}"),
-        content: content.to_string(),
+        tool_call_id: format!("call_{}", card.name),
+        content: card.content.to_string(),
         blocked: false,
+        diff: card.diff.map(str::to_string),
     }));
 }
 
@@ -165,9 +175,14 @@ fn an_expanded_edit_card_renders_the_diff() {
     .to_string();
     tool_card(
         main,
-        "edit",
-        &arguments,
-        "Edited src/lib.rs: replaced 1 occurrence(s)",
+        CardInput {
+            name: "edit",
+            arguments: &arguments,
+            content: "Edited src/lib.rs: replaced 1 occurrence(s)",
+            diff: Some(
+                "--- before\n+++ after\n@@ -1,2 +1,2 @@\n fn keep() {}\n-fn old_name() {}\n+fn new_name() {}\n",
+            ),
+        },
     );
 
     let collapsed = rendered(&app);
@@ -212,15 +227,61 @@ fn an_expanded_edit_card_renders_the_diff() {
 }
 
 #[test]
+fn an_overwrite_card_shows_the_removed_file_content() {
+    let mut app = App::new_main(Provider::DeepSeek, std::env::temp_dir());
+    let main = app.main_mut().unwrap();
+    tool_card(
+        main,
+        CardInput {
+            name: "write_file",
+            arguments: r#"{"path":"notes.txt","content":"new line\n"}"#,
+            content: "Overwrote notes.txt (9 bytes)",
+            diff: Some("--- before\n+++ after\n@@ -1 +1 @@\n-old line\n+new line\n"),
+        },
+    );
+    main.toggle_last_card();
+
+    let view = rendered(&app);
+    assert!(view.contains("- old line"), "{view}");
+    assert!(view.contains("+ new line"), "{view}");
+}
+
+#[test]
+fn a_replace_all_card_shows_each_replacement() {
+    let mut app = App::new_main(Provider::DeepSeek, std::env::temp_dir());
+    let main = app.main_mut().unwrap();
+    tool_card(
+        main,
+        CardInput {
+            name: "edit",
+            arguments: r#"{"path":"notes.txt","old_string":"foo","new_string":"bar","replace_all":true}"#,
+            content: "Edited notes.txt: replaced 2 occurrence(s)",
+            diff: Some(
+                "--- before\n+++ after\n@@ -1,3 +1,3 @@\n-foo one\n+bar one\n middle\n-foo two\n+bar two\n",
+            ),
+        },
+    );
+    main.toggle_last_card();
+
+    let view = rendered(&app);
+    for change in ["- foo one", "+ bar one", "- foo two", "+ bar two"] {
+        assert!(view.contains(change), "missing {change}: {view}");
+    }
+}
+
+#[test]
 fn an_expanded_bash_card_shows_the_last_40_lines_and_the_exit_code() {
     let mut app = App::new_main(Provider::DeepSeek, std::env::temp_dir());
     let main = app.main_mut().unwrap();
     let output: String = (1..=45).map(|i| format!("line {i}\n")).collect();
     tool_card(
         main,
-        "bash",
-        r#"{"command":"cargo test"}"#,
-        &format!("exit code: 101\n{output}"),
+        CardInput {
+            name: "bash",
+            arguments: r#"{"command":"cargo test"}"#,
+            content: &format!("exit code: 101\n{output}"),
+            diff: None,
+        },
     );
     main.toggle_last_card();
 

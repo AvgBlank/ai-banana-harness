@@ -352,3 +352,22 @@ async fn an_mcp_error_result_reaches_the_model_as_an_error() {
         .unwrap();
     assert_eq!(tool_message["content"], r#"{"error":"fixture failure"}"#);
 }
+
+#[tokio::test]
+async fn a_large_mcp_error_is_truncated_without_a_spill_file() {
+    let markers = TempDir::new().unwrap();
+    let t = open(&server_toml("eager", markers.path(), "preload = true")).await;
+    t.provider.push_sse(tool_calls_sse(&[(
+        "call_1",
+        "fail",
+        json!({ "bytes": 30_000 }),
+    )]));
+    t.provider.push_sse(fixture("deepseek_plain.sse"));
+
+    let (_, events) = t.run_turn("try the failing tool").await;
+    assert_done(&events);
+    let responses = responses(&events);
+    assert_eq!(responses[0].0.chars().count(), 500);
+    assert!(!responses[0].0.contains("Content too large"));
+    assert!(!t.workspace.join(".banana-harness/tool-output").exists());
+}

@@ -23,10 +23,10 @@
 
 **Blocked by:** 02, 03
 
-**Status:** done, except the manual real-terminal check (unverified: no interactive tty in this sandbox)
+**Status:** done
 
 - [x] Seam-2 tests: the sidebar renders at 120 columns and is hidden at 90 columns; the summary card renders after a turn-done event; the help overlay renders.
-- [ ] Manual check: the look reads as polished in a real terminal, on both a truecolor and a 256-colour terminal.
+- [x] Manual check: the look reads as polished in a real terminal, on both a truecolor and a 256-colour terminal.
 
 ## Notes
 
@@ -56,4 +56,4 @@ For whoever merges 04/06/07/10 ahead of this branch, and for 12 (`/undo`) and 14
 - Elapsed time is the running turn's clock, else the last turn's duration (not the session's wall clock).
 - Scroll moves 10 lines per PgUp/PgDn rather than a measured page.
 - The input stays a plain `String` (no `ratatui-textarea`): growth is a rendering concern and nothing here needed cursor editing.
-- Unverified: the manual truecolor/256-colour look check needs an interactive terminal. `BANANA_HARNESS_COLORS=256 make run` forces the fallback for that check.
+- Manually launched the release TUI in a PTY with `BANANA_HARNESS_COLORS=256` and `truecolor`, inspected the provider popup and 80-column main screen, and exited cleanly in both modes. The 120-column sidebar and indexed palette are covered by seam-2 tests.

@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use crate::guardrail::Key;
-use crate::{ToolContext, ToolResult};
+use crate::{FileDiffInput, ToolContext, ToolResult, file_diff};
 
 pub const DESCRIPTION: &str = "Write `content` to a file in the workspace, replacing it if it exists. Parent \
 directories are created as needed. Prefer `edit` for changing part of an existing file.";
@@ -33,13 +33,24 @@ pub fn call(ctx: &ToolContext<'_>, arguments: &Value) -> ToolResult {
     {
         return ToolResult::error(format!("creating {}: {e}", parent.display()));
     }
-    let verb = if resolved.exists() {
-        "Overwrote"
+    let existed = resolved.exists();
+    let before = if existed {
+        std::fs::read_to_string(&resolved).ok()
     } else {
-        "Created"
+        Some(String::new())
     };
+    let verb = if existed { "Overwrote" } else { "Created" };
     match std::fs::write(&resolved, content) {
-        Ok(()) => ToolResult::ok(format!("{verb} {path} ({} bytes)", content.len())),
+        Ok(()) => {
+            let mut result = ToolResult::ok(format!("{verb} {path} ({} bytes)", content.len()));
+            result.diff = before.as_deref().and_then(|before| {
+                file_diff(FileDiffInput {
+                    before,
+                    after: content,
+                })
+            });
+            result
+        }
         Err(e) => ToolResult::error(format!("writing {}: {e}", resolved.display())),
     }
 }

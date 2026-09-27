@@ -52,6 +52,9 @@ pub enum EventKind {
         tool_call_id: String,
         content: String,
         blocked: bool,
+        /// The file's before/after diff for an edit or write; omitted for other tools.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        diff: Option<String>,
     },
     /// The thread's context was replaced by a summary; `usage` is the compacted context's size.
     #[serde(rename = "context.compacted")]
