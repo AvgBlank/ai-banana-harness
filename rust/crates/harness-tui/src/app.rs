@@ -9,11 +9,29 @@ use harness_core::{
     Config, Event, EventKind, McpServerStatus, Provider, Session, TurnState, UndoOutcome, Usage,
 };
 
+use crate::input::InputBuffer;
+
 /// The sidebar hides itself below this terminal width, whatever its toggle says.
 pub const SIDEBAR_MIN_WIDTH: u16 = 100;
 
 /// Lines moved per PgUp/PgDn.
-const SCROLL_STEP: usize = 10;
+pub const SCROLL_STEP: usize = 10;
+
+/// Lines moved per mouse-wheel notch.
+pub const WHEEL_SCROLL_STEP: usize = 3;
+
+/// Slash commands and their descriptions: the one list `/help`, the suggestions and dispatch use.
+pub const COMMANDS: &[(&str, &str)] = &[
+    ("/new", "start a fresh session"),
+    ("/sessions", "list and resume earlier sessions"),
+    ("/provider", "switch between DeepSeek and Qwen"),
+    (
+        "/undo",
+        "restore the workspace to the last turn's checkpoint",
+    ),
+    ("/help", "show commands and key bindings"),
+    ("/quit", "exit"),
+];
 
 /// Animation frames for the running-turn spinner.
 pub const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -42,7 +60,10 @@ pub struct MainState {
     pub provider: Provider,
     pub workspace: PathBuf,
     pub transcript: Vec<TranscriptItem>,
-    pub input: String,
+    pub input: InputBuffer,
+    /// The input's inner width as of the last draw, for moving the cursor by visual row.
+    pub input_width: Cell<u16>,
+    suggestion: SuggestionState,
     pub turn_running: bool,
     pub spinner_frame: usize,
     /// Armed by one Ctrl+C while idle; a second one quits. Any other key disarms it.
@@ -73,6 +94,14 @@ pub struct MainState {
     pub last_turn_duration: Option<Duration>,
     /// The workspace's uncommitted changes, refreshed by the run loop as tools run.
     pub modified_files: Vec<FileChange>,
+}
+
+/// Suggestion-popup state, valid only for the input revision it was recorded at.
+#[derive(Clone, Copy, Default)]
+struct SuggestionState {
+    revision: u64,
+    selected: usize,
+    dismissed: bool,
 }
 
 /// One changed file in the workspace, with its added and removed line counts.
@@ -248,7 +277,9 @@ impl MainState {
             provider,
             workspace,
             transcript: Vec::new(),
-            input: String::new(),
+            input: InputBuffer::default(),
+            input_width: Cell::new(0),
+            suggestion: SuggestionState::default(),
             turn_running: false,
             spinner_frame: 0,
             quit_armed: false,
@@ -281,16 +312,76 @@ impl MainState {
         self.overlay = Some(Overlay::Help);
     }
 
-    pub fn scroll_up(&mut self) {
+    pub fn scroll_up(&mut self, lines: usize) {
         let top = self.scroll_top.unwrap_or(self.scroll_max.get());
-        self.scroll_top = Some(top.saturating_sub(SCROLL_STEP));
+        self.scroll_top = Some(top.saturating_sub(lines));
     }
 
     /// Scrolling back past the bottom resumes following new output.
-    pub fn scroll_down(&mut self) {
+    pub fn scroll_down(&mut self, lines: usize) {
         if let Some(top) = self.scroll_top {
-            let next = top + SCROLL_STEP;
+            let next = top + lines;
             self.scroll_top = (next < self.scroll_max.get()).then_some(next);
+        }
+    }
+
+    /// Commands matching a `/…` input: prefix matches first, then other substring matches.
+    /// Empty unless the whole input is one `/word`, no overlay is open and Esc didn't dismiss it.
+    pub fn command_suggestions(&self) -> Vec<(&'static str, &'static str)> {
+        let text = self.input.text();
+        if self.overlay.is_some()
+            || self.current_suggestion().dismissed
+            || !text.starts_with('/')
+            || text.contains(char::is_whitespace)
+        {
+            return Vec::new();
+        }
+        let query = text.to_lowercase();
+        let (mut matches, rest): (Vec<_>, Vec<_>) = COMMANDS
+            .iter()
+            .copied()
+            .filter(|(name, _)| name.contains(&query[1..]))
+            .partition(|(name, _)| name.starts_with(&query));
+        matches.extend(rest);
+        matches
+    }
+
+    /// The highlighted suggestion's index, reset whenever the input changes.
+    pub fn selected_suggestion(&self) -> usize {
+        let count = self.command_suggestions().len();
+        self.current_suggestion()
+            .selected
+            .min(count.saturating_sub(1))
+    }
+
+    /// Moves the highlight by `delta`, wrapping around the list.
+    pub fn move_suggestion(&mut self, delta: isize) {
+        let count = self.command_suggestions().len();
+        if count == 0 {
+            return;
+        }
+        let selected = self.selected_suggestion().cast_signed() + delta;
+        self.suggestion = SuggestionState {
+            revision: self.input.revision(),
+            selected: selected.rem_euclid(count.cast_signed()).cast_unsigned(),
+            dismissed: false,
+        };
+    }
+
+    /// Esc: hides the suggestions until the input changes.
+    pub fn dismiss_suggestions(&mut self) {
+        self.suggestion = SuggestionState {
+            revision: self.input.revision(),
+            selected: 0,
+            dismissed: true,
+        };
+    }
+
+    fn current_suggestion(&self) -> SuggestionState {
+        if self.suggestion.revision == self.input.revision() {
+            self.suggestion
+        } else {
+            SuggestionState::default()
         }
     }
 

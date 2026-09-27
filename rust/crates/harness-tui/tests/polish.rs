@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use harness_core::{Config, Event, EventKind, ModelOutput, Provider, TurnState, Usage};
-use harness_tui::app::{App, FileChange, MainState};
+use harness_tui::app::{App, COMMANDS, FileChange, MainState, SCROLL_STEP};
 use harness_tui::{ui, workspace_changes};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -162,20 +162,23 @@ fn the_help_overlay_lists_commands_and_keys() {
     let mut app = main_app();
     app.main_mut().unwrap().open_help();
 
-    let view = rendered(&app, 100, 36);
+    // The overlay must fit a standard 80x24 terminal.
+    let view = rendered(&app, 80, 24);
+    let commands = COMMANDS.iter().map(|(name, _)| *name);
     for expected in [
         "Help",
-        "/new",
-        "/sessions",
-        "/provider",
-        "/help",
-        "/quit",
-        "Alt+Enter",
+        "Shift/Alt+Enter",
+        "Alt+← →",
+        "Alt+⌫ / Ctrl+W",
+        "Tab / ↑ ↓ / Esc",
         "Ctrl+C",
-        "Ctrl+B",
         "Ctrl+E",
-        "PgUp / PgDn",
-    ] {
+        "Wheel / PgUp PgDn",
+        "Esc",
+    ]
+    .into_iter()
+    .chain(commands)
+    {
         assert!(view.contains(expected), "missing {expected:?}:\n{view}");
     }
 }
@@ -194,7 +197,7 @@ fn the_transcript_follows_new_output_and_pgup_scrolls_back() {
 
     let main = app.main_mut().unwrap();
     for _ in 0..20 {
-        main.scroll_up();
+        main.scroll_up(SCROLL_STEP);
     }
     let view = rendered(&app, 90, 30);
     assert!(view.contains("message number 0"), "{view}");
@@ -203,7 +206,7 @@ fn the_transcript_follows_new_output_and_pgup_scrolls_back() {
     // Paging back down past the bottom resumes following.
     let main = app.main_mut().unwrap();
     for _ in 0..40 {
-        main.scroll_down();
+        main.scroll_down(SCROLL_STEP);
     }
     assert_eq!(main.scroll_top, None);
     let view = rendered(&app, 90, 30);
@@ -214,7 +217,7 @@ fn the_transcript_follows_new_output_and_pgup_scrolls_back() {
 fn the_input_grows_from_three_to_eight_rows() {
     let rows = |input: &str| {
         let mut app = main_app();
-        app.main_mut().unwrap().input = input.to_string();
+        app.main_mut().unwrap().input.set(input.to_string());
         let mut terminal = Terminal::new(TestBackend::new(90, 30)).unwrap();
         terminal.draw(|frame| ui::draw(frame, &app)).unwrap();
         let buffer = terminal.backend().buffer();

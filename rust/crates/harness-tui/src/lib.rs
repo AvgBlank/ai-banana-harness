@@ -2,6 +2,7 @@
 //! (`run`) that both use.
 
 pub mod app;
+pub mod input;
 pub mod theme;
 pub mod ui;
 
@@ -11,12 +12,17 @@ use std::process::Command;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use crossterm::cursor::{SetCursorStyle, Show};
 use crossterm::event::{
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
     Event as CtEvent, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
+    KeyboardEnhancementFlags, MouseEvent, MouseEventKind, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    supports_keyboard_enhancement,
 };
 use futures_util::StreamExt;
 use harness_core::{
@@ -27,7 +33,7 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use tokio::time::interval;
 
-use crate::app::{App, FileChange, Screen};
+use crate::app::{App, FileChange, MainState, SCROLL_STEP, Screen, WHEEL_SCROLL_STEP};
 
 const FRAME_INTERVAL: Duration = Duration::from_millis(33);
 
@@ -92,6 +98,11 @@ pub async fn run() -> Result<()> {
             ct_event = term_events.next() => {
                 let Some(ct_event) = ct_event else { break };
                 let ct_event = ct_event.context("reading a terminal event")?;
+                // Mouse capture also reports every motion; only redraw for what changed state.
+                if let CtEvent::Mouse(mouse) = ct_event {
+                    dirty |= interpret_mouse(&mut app, mouse);
+                    continue;
+                }
                 match handle_terminal_event(
                     &mut app,
                     &ct_event,
@@ -108,8 +119,8 @@ pub async fn run() -> Result<()> {
                         // so it's dropped for the duration and recreated afterwards.
                         drop(term_events);
                         if let Some(main) = app.main_mut() {
-                            match edit_in_editor(&mut terminal, &main.input) {
-                                Ok(text) => main.input = text,
+                            match edit_in_editor(&mut terminal, main.input.text()) {
+                                Ok(text) => main.input.set(text),
                                 Err(e) => main.last_error = Some(format!("{e:#}")),
                             }
                         }
@@ -287,7 +298,7 @@ fn handle_terminal_event(
 
 fn paste_into(app: &mut App, text: &str) {
     match &mut app.screen {
-        Screen::Main(state) => state.input.push_str(text),
+        Screen::Main(state) => state.input.insert_str(text),
         Screen::Startup(state) if state.needs_workspace && !state.key_missing => {
             state.workspace_input.push_str(text.trim());
         }
@@ -295,7 +306,8 @@ fn paste_into(app: &mut App, text: &str) {
     }
 }
 
-enum Action {
+/// What a key asks the run loop to do beyond changing the app's state.
+pub enum Action {
     None,
     Quit,
     Cancel,
@@ -318,7 +330,8 @@ enum Action {
     },
 }
 
-fn interpret_key(app: &mut App, key: KeyEvent) -> Action {
+/// The pure key → state seam: applies `key` to `app` and says what the run loop must do.
+pub fn interpret_key(app: &mut App, key: KeyEvent) -> Action {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let ctrl_c = ctrl && key.code == KeyCode::Char('c');
 
@@ -366,45 +379,139 @@ fn interpret_key(app: &mut App, key: KeyEvent) -> Action {
             if let Some(overlay) = &mut state.overlay {
                 return interpret_overlay_key(overlay, key.code);
             }
-
-            match key.code {
-                KeyCode::Char('b') if ctrl => state.toggle_sidebar(),
-                KeyCode::Char('e') if ctrl => return Action::OpenEditor,
-                KeyCode::PageUp => state.scroll_up(),
-                KeyCode::PageDown => state.scroll_down(),
-                KeyCode::Enter if key.modifiers.contains(KeyModifiers::ALT) => {
-                    state.input.push('\n');
-                }
-                KeyCode::Enter => {
-                    let text = state.input.trim().to_string();
-                    if text.is_empty() {
-                        state.toggle_last_card();
-                        return Action::None;
-                    }
-                    if state.turn_running {
-                        return Action::None;
-                    }
-                    state.input.clear();
-                    match text.as_str() {
-                        "/quit" => return Action::Quit,
-                        "/new" => return Action::NewSession,
-                        "/sessions" => return Action::ListSessions,
-                        "/provider" => return Action::ToggleProvider,
-                        "/undo" => return Action::Undo,
-                        "/help" => state.open_help(),
-                        _ => return Action::Send(text),
-                    }
-                }
-                KeyCode::Backspace => {
-                    state.input.pop();
-                }
-                KeyCode::Char('o') if ctrl => state.toggle_last_card(),
-                KeyCode::Char(c) if !ctrl => state.input.push(c),
-                _ => {}
+            if let Some(action) = interpret_suggestion_key(state, key) {
+                return action;
             }
-            Action::None
+            interpret_input_key(state, key)
         }
     }
+}
+
+/// Keys the slash-command popup takes while it's showing; `None` leaves the key to the input.
+fn interpret_suggestion_key(state: &mut MainState, key: KeyEvent) -> Option<Action> {
+    let suggestions = state.command_suggestions();
+    let selected = suggestions.get(state.selected_suggestion())?.0;
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let plain = !key
+        .modifiers
+        .intersects(KeyModifiers::ALT | KeyModifiers::SHIFT | KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Up | KeyCode::BackTab => state.move_suggestion(-1),
+        KeyCode::Char('p') if ctrl => state.move_suggestion(-1),
+        KeyCode::Down => state.move_suggestion(1),
+        KeyCode::Char('n') if ctrl => state.move_suggestion(1),
+        KeyCode::Tab => state.input.set(selected.to_string()),
+        KeyCode::Esc => state.dismiss_suggestions(),
+        KeyCode::Enter if plain => {
+            if state.turn_running {
+                return Some(Action::None);
+            }
+            state.input.clear();
+            return Some(run_command(state, selected).unwrap_or(Action::None));
+        }
+        _ => return None,
+    }
+    Some(Action::None)
+}
+
+/// Dispatches a slash command by name; `None` when `name` isn't one of [`app::COMMANDS`].
+fn run_command(state: &mut MainState, name: &str) -> Option<Action> {
+    Some(match name {
+        "/quit" => Action::Quit,
+        "/new" => Action::NewSession,
+        "/sessions" => Action::ListSessions,
+        "/provider" => Action::ToggleProvider,
+        "/undo" => Action::Undo,
+        "/help" => {
+            state.open_help();
+            Action::None
+        }
+        _ => return None,
+    })
+}
+
+/// Editing keys for the message input. Covers the encodings terminals actually send for
+/// Option/Alt word keys: ESC b/f (Terminal.app, Ghostty), ESC[1;3D/C (iTerm2, xterm), ESC DEL
+/// and ^W for Option+Backspace, ^U/^A for Cmd+Backspace/Left, plus kitty-protocol modifiers.
+fn interpret_input_key(state: &mut MainState, key: KeyEvent) -> Action {
+    let mods = key.modifiers;
+    let ctrl = mods.contains(KeyModifiers::CONTROL);
+    let alt = mods.contains(KeyModifiers::ALT);
+    let shift = mods.contains(KeyModifiers::SHIFT);
+    let cmd = mods.contains(KeyModifiers::SUPER);
+    let input = &mut state.input;
+    match key.code {
+        KeyCode::Char('b') if ctrl => state.toggle_sidebar(),
+        KeyCode::Char('e') if ctrl => return Action::OpenEditor,
+        KeyCode::Char('o') if ctrl => state.toggle_last_card(),
+        KeyCode::Char('a') if ctrl => input.move_line_start(),
+        KeyCode::Char('u') if ctrl => input.delete_to_line_start(),
+        KeyCode::Char('k') if ctrl => input.delete_to_line_end(),
+        KeyCode::Char('w') if ctrl => input.delete_word_left(),
+        KeyCode::Char('j') if ctrl => input.insert_char('\n'),
+        KeyCode::Char('b') if alt && !ctrl => input.move_word_left(),
+        KeyCode::Char('f') if alt && !ctrl => input.move_word_right(),
+        KeyCode::Char('d') if alt && !ctrl => input.delete_word_right(),
+        KeyCode::Char(c) if !ctrl && !alt && !cmd => input.insert_char(c),
+        KeyCode::PageUp => state.scroll_up(SCROLL_STEP),
+        KeyCode::PageDown => state.scroll_down(SCROLL_STEP),
+        KeyCode::Enter if alt || shift => input.insert_char('\n'),
+        KeyCode::Enter => {
+            let text = input.text().trim().to_string();
+            if text.is_empty() {
+                state.toggle_last_card();
+                return Action::None;
+            }
+            if state.turn_running {
+                return Action::None;
+            }
+            input.clear();
+            return run_command(state, &text).unwrap_or(Action::Send(text));
+        }
+        KeyCode::Backspace if alt || ctrl => input.delete_word_left(),
+        KeyCode::Backspace if cmd => input.delete_to_line_start(),
+        KeyCode::Backspace => input.backspace(),
+        KeyCode::Delete if alt => input.delete_word_right(),
+        KeyCode::Delete => input.delete(),
+        KeyCode::Left if alt || ctrl => input.move_word_left(),
+        KeyCode::Left if cmd => input.move_line_start(),
+        KeyCode::Left => input.move_left(),
+        KeyCode::Right if alt || ctrl => input.move_word_right(),
+        KeyCode::Right if cmd => input.move_line_end(),
+        KeyCode::Right => input.move_right(),
+        KeyCode::Home => input.move_line_start(),
+        KeyCode::End => input.move_line_end(),
+        KeyCode::Up => input.move_up(state.input_width.get()),
+        KeyCode::Down => input.move_down(state.input_width.get()),
+        _ => {}
+    }
+    Action::None
+}
+
+/// Mouse input: the wheel scrolls the transcript, or moves the `/sessions` selection. Returns
+/// whether anything changed, so motion reports don't trigger redraws.
+pub fn interpret_mouse(app: &mut App, mouse: MouseEvent) -> bool {
+    let Some(state) = app.main_mut() else {
+        return false;
+    };
+    let up = match mouse.kind {
+        MouseEventKind::ScrollUp => true,
+        MouseEventKind::ScrollDown => false,
+        _ => return false,
+    };
+    match &mut state.overlay {
+        None if up => state.scroll_up(WHEEL_SCROLL_STEP),
+        None => state.scroll_down(WHEEL_SCROLL_STEP),
+        Some(app::Overlay::Sessions { sessions, selected }) => {
+            *selected = if up {
+                selected.saturating_sub(1)
+            } else {
+                (*selected + 1).min(sessions.len().saturating_sub(1))
+            };
+        }
+        Some(_) => return false,
+    }
+    true
 }
 
 /// Key handling while an overlay is open: it captures every key until it closes.
@@ -596,22 +703,44 @@ fn open_harness(
 /// evaluator's shell is left clean whether the run loop exits normally or with an error.
 struct TerminalGuard {
     terminal: Terminal<CrosstermBackend<io::Stdout>>,
+    /// Whether the kitty keyboard protocol was pushed, so it's popped symmetrically.
+    keyboard_enhanced: bool,
 }
 
 impl TerminalGuard {
     fn enter() -> Result<Self> {
         enable_raw_mode().context("enabling raw mode")?;
-        let mut stdout = io::stdout();
-        if let Err(e) = execute!(
-            stdout,
-            EnterAlternateScreen,
-            crossterm::event::EnableBracketedPaste
-        ) {
-            let _ = disable_raw_mode();
+        // Queried before the event stream exists, which would otherwise swallow the reply.
+        let keyboard_enhanced = matches!(supports_keyboard_enhancement(), Ok(true));
+        let mut guard = Self {
+            terminal: Terminal::new(CrosstermBackend::new(io::stdout()))
+                .context("opening terminal")?,
+            keyboard_enhanced,
+        };
+        if let Err(e) = guard.take_over() {
+            guard.suspend();
             return Err(e).context("entering the alternate screen");
         }
-        let terminal = Terminal::new(CrosstermBackend::new(stdout)).context("opening terminal")?;
-        Ok(Self { terminal })
+        Ok(guard)
+    }
+
+    fn take_over(&mut self) -> io::Result<()> {
+        let out = self.terminal.backend_mut();
+        execute!(
+            out,
+            EnterAlternateScreen,
+            EnableBracketedPaste,
+            EnableMouseCapture,
+            SetCursorStyle::BlinkingBar
+        )?;
+        if self.keyboard_enhanced {
+            // Makes Alt/Shift/Cmd on Backspace, Enter and arrows arrive unambiguously.
+            execute!(
+                out,
+                PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+            )?;
+        }
+        Ok(())
     }
 
     fn draw(&mut self, render: impl FnOnce(&mut ratatui::Frame)) -> Result<()> {
@@ -621,10 +750,17 @@ impl TerminalGuard {
 
     /// Hands the terminal back to the shell, e.g. while `$EDITOR` runs. Best effort, as in `Drop`.
     fn suspend(&mut self) {
+        let out = self.terminal.backend_mut();
+        if self.keyboard_enhanced {
+            let _ = execute!(out, PopKeyboardEnhancementFlags);
+        }
         let _ = execute!(
-            self.terminal.backend_mut(),
-            crossterm::event::DisableBracketedPaste,
-            LeaveAlternateScreen
+            out,
+            DisableMouseCapture,
+            DisableBracketedPaste,
+            SetCursorStyle::DefaultUserShape,
+            LeaveAlternateScreen,
+            Show
         );
         let _ = disable_raw_mode();
     }
@@ -632,12 +768,7 @@ impl TerminalGuard {
     /// Undoes [`Self::suspend`] and forces a full redraw of whatever the editor left behind.
     fn resume(&mut self) -> Result<()> {
         enable_raw_mode().context("enabling raw mode")?;
-        execute!(
-            self.terminal.backend_mut(),
-            EnterAlternateScreen,
-            crossterm::event::EnableBracketedPaste
-        )
-        .context("entering the alternate screen")?;
+        self.take_over().context("entering the alternate screen")?;
         self.terminal.clear().context("clearing the terminal")?;
         Ok(())
     }

@@ -45,17 +45,28 @@ Main screen:
 
 | Key | Action |
 | --- | --- |
-| `Enter` | send the message |
-| `Alt+Enter` | insert a newline |
+| `Enter` | send the message (or run the highlighted `/command`) |
+| `Shift+Enter` / `Alt+Enter` / `Ctrl+J` | insert a newline |
+| `←` `→` `↑` `↓`, `Home` / `End` (`Ctrl+A`) | move the cursor (`↑`/`↓` by visual row) |
+| `Alt+←` / `Alt+→` (also `Alt+B`/`Alt+F`, `Ctrl+←`/`Ctrl+→`) | move by word |
+| `Alt+Backspace` / `Ctrl+W` | delete the word before the cursor (`Alt+Delete`/`Alt+D` after it) |
+| `Ctrl+U` / `Ctrl+K` | delete to the start / end of the line |
 | `Ctrl+C` | cancel the running turn; twice to quit |
 | `Ctrl+B` | toggle the sidebar |
 | `Ctrl+E` | edit the input in `$EDITOR` |
 | `Ctrl+O` (or `Enter` on empty input) | expand/collapse the last tool card |
-| `PgUp` / `PgDn` | scroll the transcript |
+| mouse wheel, `PgUp` / `PgDn` | scroll the transcript |
 | `Esc` | close an overlay |
+
+On macOS, Option is Alt for the word keys above. If Option+key types a symbol instead, turn on
+"Use Option as Meta key" (Terminal.app) or set Left Option to "Esc+" (iTerm2); `Ctrl+W` and
+`Ctrl+←`/`Ctrl+→` work either way. The TUI captures the mouse for wheel scrolling, so select text
+with `Shift`+drag (`Option`+drag in iTerm2).
 
 Slash commands: `/new` (fresh session), `/sessions` (list and resume), `/provider` (switch
 DeepSeek/Qwen), `/undo` (restore the workspace to the last turn's checkpoint), `/help`, `/quit`.
+Typing `/` shows matching commands as you type: `↑`/`↓` pick one, `Tab` completes it, `Enter`
+runs it, `Esc` hides the list.
 
 ## Guardrails
 

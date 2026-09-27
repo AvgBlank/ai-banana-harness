@@ -16,8 +16,8 @@ use syntect::highlighting::{Theme, ThemeSet};
 use syntect::parsing::SyntaxSet;
 
 use crate::app::{
-    App, MainState, Overlay, Screen, StartupState, SubagentCard, SubagentStatus, SummaryCard,
-    ToolCallItem, TranscriptItem,
+    App, COMMANDS, MainState, Overlay, Screen, StartupState, SubagentCard, SubagentStatus,
+    SummaryCard, ToolCallItem, TranscriptItem,
 };
 use crate::theme;
 
@@ -29,28 +29,34 @@ const INPUT_MAX_TEXT_ROWS: usize = 6;
 /// Most modified files listed in the sidebar before collapsing the rest into a count.
 const SIDEBAR_MAX_FILES: usize = 8;
 
-/// `/help`'s command list; keep in step with `interpret_key` in `lib.rs`.
-const HELP_COMMANDS: &[(&str, &str)] = &[
-    ("/new", "start a fresh session"),
-    ("/sessions", "list and resume earlier sessions"),
-    ("/provider", "switch between DeepSeek and Qwen"),
-    (
-        "/undo",
-        "restore the workspace to the last turn's checkpoint",
-    ),
-    ("/help", "show this help"),
-    ("/quit", "exit"),
-];
-
+/// `/help`'s key list; keep in step with `interpret_key` in `lib.rs`.
 const HELP_KEYS: &[(&str, &str)] = &[
-    ("Enter", "send the message"),
-    ("Alt+Enter", "insert a newline"),
+    ("Enter", "send; runs the highlighted /command"),
+    ("Shift/Alt+Enter", "newline (also Ctrl+J)"),
+    ("Alt+← → / Alt+B F", "move by word (also Ctrl+← →)"),
+    ("Home End / Ctrl+A", "line start / end"),
+    (
+        "Alt+⌫ / Ctrl+W",
+        "delete word; Ctrl+U / Ctrl+K to line start / end",
+    ),
+    (
+        "Tab / ↑ ↓ / Esc",
+        "complete, pick or hide /command suggestions",
+    ),
     ("Ctrl+C", "cancel the running turn; twice to quit"),
-    ("Ctrl+B", "toggle the sidebar"),
+    (
+        "Ctrl+B / Ctrl+O",
+        "toggle the sidebar / expand the last tool card",
+    ),
     ("Ctrl+E", "edit the input in $EDITOR"),
-    ("PgUp / PgDn", "scroll the transcript"),
+    (
+        "Wheel / PgUp PgDn",
+        "scroll the transcript (Shift+drag selects text)",
+    ),
     ("Esc", "close an overlay"),
 ];
+
+const PLACEHOLDER: &str = "Type a message · / for commands";
 
 pub fn draw(frame: &mut Frame, app: &App) {
     frame.render_widget(Block::new().style(theme::base()), frame.area());
@@ -140,13 +146,18 @@ fn draw_main(frame: &mut Frame, state: &MainState) {
         body
     };
 
-    let input_lines = input_line_count(state, main.width.saturating_sub(2));
-    let input_rows = input_lines.clamp(1, INPUT_MAX_TEXT_ROWS) as u16 + 2;
+    let input_rows = state
+        .input
+        .layout(main.width.saturating_sub(2))
+        .row_count()
+        .clamp(1, INPUT_MAX_TEXT_ROWS) as u16
+        + 2;
     let [transcript, input] =
         Layout::vertical([Constraint::Min(3), Constraint::Length(input_rows)]).areas(main);
 
     draw_transcript(frame, state, transcript);
-    draw_input(frame, state, input, input_lines);
+    draw_input(frame, state, input);
+    draw_suggestions(frame, state, transcript);
     draw_status(frame, state, status);
 
     if let Some(overlay) = &state.overlay {
@@ -269,17 +280,15 @@ fn draw_mcp_auth(frame: &mut Frame, server: &str, url: &str) {
 fn draw_help(frame: &mut Frame) {
     let entry = |(key, description): &(&str, &str)| {
         Line::from(vec![
-            Span::styled(format!("  {key:<13}"), theme::accent()),
+            Span::styled(format!("  {key:<19}"), theme::accent()),
             Span::raw(description.to_string()),
         ])
     };
     let mut lines = vec![Line::from("Commands").style(theme::accent_bold())];
-    lines.extend(HELP_COMMANDS.iter().map(entry));
+    lines.extend(COMMANDS.iter().map(entry));
     lines.push(Line::from(""));
     lines.push(Line::from("Keys").style(theme::accent_bold()));
     lines.extend(HELP_KEYS.iter().map(entry));
-    lines.push(Line::from(""));
-    lines.push(Line::from("Esc close").style(theme::muted()));
 
     // Sized to its content (plus border and padding), centred.
     let height = u16::try_from(lines.len())
@@ -288,12 +297,12 @@ fn draw_help(frame: &mut Frame) {
     let [area] = Layout::vertical([Constraint::Length(height)])
         .flex(Flex::Center)
         .areas(frame.area());
-    let [area] = Layout::horizontal([Constraint::Length(64)])
+    let [area] = Layout::horizontal([Constraint::Length(76)])
         .flex(Flex::Center)
         .areas(area);
     frame.render_widget(Clear, area);
     let block = Block::bordered()
-        .title(" Help ")
+        .title(" Help · Esc close ")
         .border_style(theme::border_focused())
         .padding(Padding::uniform(1))
         .style(theme::base());
@@ -489,7 +498,7 @@ fn draw_transcript<'a>(frame: &mut Frame, state: &'a MainState, area: Rect) {
     }
 
     let title = if state.scroll_top.is_some() {
-        " Transcript (scrolled · PgDn to follow) "
+        " Transcript (scrolled · PgDn or wheel to follow) "
     } else {
         " Transcript "
     };
@@ -574,29 +583,91 @@ fn push_subagent_lines<'a>(lines: &mut Vec<Line<'a>>, card: &'a SubagentCard) {
     lines.push(Line::from(""));
 }
 
-/// The input's rendered line count at `width`, including the empty line a trailing Alt+Enter
-/// starts, which wrapping alone doesn't count.
-fn input_line_count(state: &MainState, width: u16) -> usize {
-    let wrapped = Paragraph::new(state.input.as_str())
-        .wrap(Wrap { trim: false })
-        .line_count(width);
-    wrapped.max(state.input.split('\n').count())
-}
-
-fn draw_input(frame: &mut Frame, state: &MainState, area: Rect, lines: usize) {
+fn draw_input(frame: &mut Frame, state: &MainState, area: Rect) {
     let block = Block::bordered()
-        .title(" Message (Enter sends · Alt+Enter newline · Ctrl+E editor) ")
+        .title(" Message (Enter sends · Shift/Alt+Enter newline · Ctrl+E editor) ")
         .border_style(theme::border_focused())
         .style(theme::base());
-    // Past the height cap, keep the newest lines (where typing happens) in view.
-    let top = lines.saturating_sub(INPUT_MAX_TEXT_ROWS);
-    frame.render_widget(
-        Paragraph::new(state.input.as_str())
-            .block(block)
-            .wrap(Wrap { trim: false })
-            .scroll((u16::try_from(top).unwrap_or(u16::MAX), 0)),
-        area,
-    );
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    state.input_width.set(inner.width);
+
+    let layout = state.input.layout(inner.width);
+    // Past the height cap, scroll so the cursor's row stays in view.
+    let top = (layout.cursor_row + 1).saturating_sub(INPUT_MAX_TEXT_ROWS);
+    let text = state.input.text();
+    let lines: Vec<Line> = if text.is_empty() {
+        vec![Line::from(PLACEHOLDER).style(theme::muted())]
+    } else {
+        layout
+            .rows
+            .iter()
+            .skip(top)
+            .map(|row| Line::from(text[row.clone()].replace('\t', "    ")))
+            .collect()
+    };
+    frame.render_widget(Paragraph::new(lines), inner);
+
+    // Overlays take the keyboard, so the cursor only shows while the input does.
+    if state.overlay.is_none() && inner.width > 0 && inner.height > 0 {
+        let row = u16::try_from(layout.cursor_row - top).unwrap_or(u16::MAX);
+        let col = layout.cursor_col.min(inner.width - 1);
+        frame.set_cursor_position((inner.x + col, inner.y + row.min(inner.height - 1)));
+    }
+}
+
+/// The slash-command popup, drawn over the bottom of `above` (the space above the input).
+fn draw_suggestions(frame: &mut Frame, state: &MainState, above: Rect) {
+    let suggestions = state.command_suggestions();
+    if suggestions.is_empty() || above.height < 3 {
+        return;
+    }
+    let selected = state.selected_suggestion();
+    let name_width = suggestions.iter().map(|(n, _)| n.len()).max().unwrap_or(0);
+    let hint = " Tab complete · Enter run · Esc dismiss ";
+    let content_width = suggestions
+        .iter()
+        .map(|(_, d)| name_width + d.chars().count() + 4)
+        .max()
+        .unwrap_or(0)
+        .max(hint.chars().count());
+    let width = u16::try_from(content_width + 2)
+        .unwrap_or(u16::MAX)
+        .min(above.width);
+    let visible = usize::from(above.height - 2).min(suggestions.len());
+    let height = u16::try_from(visible).unwrap_or(u16::MAX) + 2;
+    let area = Rect {
+        x: above.x,
+        y: above.y + above.height - height,
+        width,
+        height,
+    };
+    // Keep the highlighted row in view when the list doesn't fit.
+    let skip = (selected + 1).saturating_sub(visible);
+    let lines: Vec<Line> = suggestions
+        .iter()
+        .enumerate()
+        .skip(skip)
+        .take(visible)
+        .map(|(i, (name, description))| {
+            let (marker, name_style) = if i == selected {
+                ("› ", theme::accent_bold().add_modifier(Modifier::REVERSED))
+            } else {
+                ("  ", theme::accent())
+            };
+            Line::from(vec![
+                Span::styled(marker, theme::accent()),
+                Span::styled(format!("{name:<name_width$}"), name_style),
+                Span::styled(format!("  {description}"), theme::muted()),
+            ])
+        })
+        .collect();
+    frame.render_widget(Clear, area);
+    let block = Block::bordered()
+        .title_bottom(hint)
+        .border_style(theme::border_focused())
+        .style(theme::base());
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 fn summary_line(card: &SummaryCard) -> Line<'static> {
