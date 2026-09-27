@@ -32,7 +32,7 @@ fixtures/, scripts/      the live smoke fixture and script
 ## Tests
 
 ```
-make test   # the offline suite; with AI_API_KEY set, also the live smoke against both providers
+make test   # the offline suite; with AI_API_KEY set, also the live smoke against the provider your key belongs to
 make lint   # cargo fmt --check, and clippy with warnings denied
 ```
 

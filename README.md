@@ -24,8 +24,9 @@ WORKSPACE=/path/to/repo make run
 Paste a GitHub issue into the input box and press Enter; the agent reads, edits and runs
 commands in the workspace until it resolves it, streaming every step into the TUI.
 
-`make test` runs the offline test suite; with `AI_API_KEY` set it also runs a live smoke test
-against both providers (a small fixture repository with one failing test). `make clean` removes
+`make test` runs the offline test suite; with `AI_API_KEY` set it also runs a live smoke test (a
+small fixture repository with one failing test) against each provider, skipping the one that
+rejects the key. `make clean` removes
 build artefacts.
 
 ## Configuration

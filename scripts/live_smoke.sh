@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Live smoke test: a headless run against the live-smoke fixture, asserting its failing
 # test passes afterwards. Requires AI_API_KEY. Run per provider: live_smoke.sh <deepseek|qwen>
+# Exit codes: 0 pass, 1 fail, 3 the provider rejected the key (it belongs to the other provider).
 set -euo pipefail
 
 provider="${1:?usage: live_smoke.sh <deepseek|qwen>}"
@@ -23,8 +24,16 @@ issue="$(cat "$fixture/ISSUE.md")"
 events="$work/events.jsonl"
 
 echo "live smoke ($provider): running the agent..."
-cargo run --quiet --release --locked --manifest-path "$root/Cargo.toml" --bin banana-harness -- \
-  run --provider "$provider" --workspace "$work" --json "$issue" >"$events"
+if ! cargo run --quiet --release --locked --manifest-path "$root/Cargo.toml" --bin banana-harness -- \
+  run --provider "$provider" --workspace "$work" --json "$issue" >"$events"; then
+  if grep -q '"type":"turn.done"' "$events" && grep -qE 'HTTP 40[13]' "$events"; then
+    echo "live smoke ($provider): SKIP -- the provider rejected AI_API_KEY"
+    exit 3
+  fi
+  echo "live smoke ($provider): FAIL -- the headless run ended with an error:" >&2
+  grep '"type":"turn.done"' "$events" >&2 || cat "$events" >&2
+  exit 1
+fi
 
 if "$work/tests/test_calc.sh"; then
   echo "live smoke ($provider): PASS -- the agent fixed the fixture"

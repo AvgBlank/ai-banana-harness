@@ -17,11 +17,14 @@ run:
 
 test:
 	$(CARGO) test --workspace --locked
-	@if [ -n "$$AI_API_KEY" ]; then \
-	  scripts/live_smoke.sh deepseek && scripts/live_smoke.sh qwen; \
-	else \
-	  echo "AI_API_KEY not set; skipping the live smoke test."; \
-	fi
+	@# One key belongs to one provider: the other one's 401 is a skip, not a failure.
+	@if [ -z "$$AI_API_KEY" ]; then echo "AI_API_KEY not set; skipping the live smoke test."; exit 0; fi; \
+	passed=0; \
+	for provider in deepseek qwen; do \
+	  scripts/live_smoke.sh $$provider; status=$$?; \
+	  if [ $$status -eq 0 ]; then passed=$$((passed + 1)); elif [ $$status -ne 3 ]; then exit $$status; fi; \
+	done; \
+	if [ $$passed -eq 0 ]; then echo "error: both DeepSeek and Qwen rejected AI_API_KEY." >&2; exit 1; fi
 
 lint:
 	$(CARGO) fmt --check
