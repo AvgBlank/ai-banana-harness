@@ -126,7 +126,10 @@ async fn reads_a_file_in_the_workspace_and_then_answers() {
         .iter()
         .map(|t| t["function"]["name"].as_str().unwrap())
         .collect();
-    assert_eq!(tool_names, HashSet::from(["read_file", "glob", "grep"]));
+    assert_eq!(
+        tool_names,
+        HashSet::from(["read_file", "glob", "grep", "create_sub_agent"])
+    );
     for tool in tools {
         assert_eq!(tool["type"], "function");
         let parameters = tool["function"]["parameters"].as_object().unwrap();

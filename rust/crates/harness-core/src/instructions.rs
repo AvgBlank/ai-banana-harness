@@ -55,7 +55,7 @@ pub struct SystemPromptInput<'a> {
     pub agents_md: Option<&'a str>,
     pub skills: &'a [Skill],
     pub subagents_enabled: bool,
-    /// `true` for the turn's root thread; `false` for a subagent thread (ticket 07).
+    /// `true` for the turn's root thread; `false` for a subagent thread.
     pub root: bool,
 }
 

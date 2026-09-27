@@ -53,6 +53,20 @@ pub enum EventKind {
         content: String,
         blocked: bool,
     },
+    /// A subagent thread started under `parent`; `title` is the name its parent gave it.
+    #[serde(rename = "thread.created")]
+    ThreadCreated {
+        thread_id: String,
+        parent: String,
+        title: String,
+    },
+    /// A subagent thread finished; `error` is set when it failed.
+    #[serde(rename = "thread.done")]
+    ThreadDone {
+        thread_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
 }
 
 impl EventKind {
@@ -65,6 +79,8 @@ impl EventKind {
             EventKind::ModelMessageDelta { .. } => "model.message.delta",
             EventKind::ToolCall { .. } => "tool.call",
             EventKind::ToolResponse { .. } => "tool.response",
+            EventKind::ThreadCreated { .. } => "thread.created",
+            EventKind::ThreadDone { .. } => "thread.done",
         }
     }
 
@@ -74,7 +90,9 @@ impl EventKind {
             EventKind::ModelMessage { thread_id, .. }
             | EventKind::ModelMessageDelta { thread_id, .. }
             | EventKind::ToolCall { thread_id, .. }
-            | EventKind::ToolResponse { thread_id, .. } => Some(thread_id),
+            | EventKind::ToolResponse { thread_id, .. }
+            | EventKind::ThreadCreated { thread_id, .. }
+            | EventKind::ThreadDone { thread_id, .. } => Some(thread_id),
             EventKind::TurnCreated { .. } | EventKind::TurnDone { .. } => None,
         }
     }

@@ -1,16 +1,22 @@
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::{Arc, LazyLock, Mutex};
 
 use anyhow::{Context, Result, anyhow, bail};
 use harness_llm::{
-    ChatClient, ChatEvent, ClientConfig, Dialect, Message, Role, ToolDefinition, Usage,
+    ChatClient, ChatEvent, ClientConfig, Dialect, Message, Role, ToolCallResult, ToolDefinition,
+    Usage,
 };
 use harness_store::{FinishTurn, NewEvent, NewSession, NewTurn, Session, Store, UpsertThread};
-use tokio::sync::mpsc;
+use harness_tools::ToolResult;
+use tokio::sync::{Semaphore, mpsc};
+use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use ulid::{Generator, Ulid};
 
+use crate::builtins::{Builtin, MAX_PARALLEL_SUB_AGENTS, SubAgentRequest};
 use crate::config::{Config, Provider};
 use crate::event::{Event, EventKind, ModelOutput, TurnState};
 use crate::instructions::{SystemPromptInput, system_prompt};
@@ -138,7 +144,9 @@ impl Harness {
     }
 }
 
-/// The only writer to the store: each durable event is persisted, then forwarded.
+/// The only writer to the store: each durable event is persisted, then forwarded. Cloned into
+/// each subagent task, so every thread of the turn writes through the same channel.
+#[derive(Clone)]
 struct TurnRunner {
     inner: Arc<Inner>,
     turn_id: String,
@@ -234,26 +242,55 @@ impl TurnRunner {
             subagents_enabled: inner.config.agent.subagents,
             root: true,
         });
+        // A subagent never gets the user instructions or the subagent section: it can't spawn.
+        let child_prompt = system_prompt(SystemPromptInput {
+            workspace: &inner.workspace,
+            config_instructions: "",
+            agents_md: None,
+            skills: &loaded_skills.skills,
+            subagents_enabled: false,
+            root: false,
+        });
         let history: Vec<Message> = existing_thread
             .as_ref()
             .and_then(|t| serde_json::from_str(&t.context_json).ok())
             .unwrap_or_default();
         let mut messages = Vec::with_capacity(history.len() + 2);
-        messages.push(Message {
-            role: Role::System,
-            content: prompt,
-            tool_calls: Vec::new(),
-            tool_call_id: None,
-        });
+        messages.push(text_message(Role::System, prompt));
         messages.extend(history);
-        messages.push(Message {
-            role: Role::User,
-            content: input.to_string(),
-            tool_calls: Vec::new(),
-            tool_call_id: None,
+        messages.push(text_message(Role::User, input.to_string()));
+
+        let shared = Arc::new(TurnShared {
+            session_id: session_id.to_string(),
+            client,
+            child_prompt,
         });
-        let tool_specs = harness_tools::host_tool_specs();
-        let tools: Vec<ToolDefinition> = tool_specs
+        let root = ThreadInfo {
+            id: thread_id,
+            parent: None,
+            title: None,
+        };
+        Ok(
+            match self
+                .run_thread(&shared, &root, &mut messages, usage)
+                .await?
+            {
+                ThreadEnd::Done(_) => TurnState::Done,
+                ThreadEnd::Cancelled => TurnState::Cancelled,
+            },
+        )
+    }
+
+    /// One thread's loop, root or subagent: stream an answer, and if it asked for tool calls,
+    /// run them and go around again. A round with no tool calls ends the thread with its text.
+    async fn run_thread(
+        &self,
+        shared: &Arc<TurnShared>,
+        thread: &ThreadInfo,
+        messages: &mut Vec<Message>,
+        usage: &mut Option<Usage>,
+    ) -> Result<ThreadEnd> {
+        let mut tools: Vec<ToolDefinition> = harness_tools::host_tool_specs()
             .into_iter()
             .map(|spec| ToolDefinition {
                 name: spec.name,
@@ -261,14 +298,17 @@ impl TurnRunner {
                 parameters: spec.parameters,
             })
             .collect();
+        tools.extend(Builtin::definitions(
+            thread.is_root(),
+            &self.inner.config.agent,
+        ));
+        let thread_id = &thread.id;
 
-        // One iteration per LLM round: stream an answer, and if it asked for tool calls, run
-        // them and go around again. A round with no tool calls ends the turn.
         loop {
             let mut stream = tokio::select! {
                 biased;
-                () = self.cancel.cancelled() => return Ok(TurnState::Cancelled),
-                result = client.stream(&messages, &tools) => result?,
+                () = self.cancel.cancelled() => return Ok(ThreadEnd::Cancelled),
+                result = shared.client.stream(messages, &tools) => result?,
             };
             let message_id = new_id();
             self.forward(EventKind::ModelMessage {
@@ -280,7 +320,7 @@ impl TurnRunner {
             let completion = loop {
                 let chat_event = tokio::select! {
                     biased;
-                    () = self.cancel.cancelled() => return Ok(TurnState::Cancelled),
+                    () = self.cancel.cancelled() => return Ok(ThreadEnd::Cancelled),
                     chat_event = stream.next() => chat_event?,
                 };
                 let Some(chat_event) = chat_event else {
@@ -318,7 +358,7 @@ impl TurnRunner {
 
             messages.push(Message {
                 role: Role::Assistant,
-                content: completion.content,
+                content: completion.content.clone(),
                 tool_calls: completion
                     .tool_calls
                     .iter()
@@ -335,10 +375,10 @@ impl TurnRunner {
             });
             // A snapshot after every LLM step, so a resumed session picks up mid-turn state
             // even if nothing runs after this (a plain answer, or the process stopping here).
-            self.snapshot_thread(session_id, &thread_id, &messages, usage.as_ref())?;
+            self.snapshot_thread(&shared.session_id, thread, messages, usage.as_ref())?;
 
             if completion.tool_calls.is_empty() {
-                return Ok(TurnState::Done);
+                return Ok(ThreadEnd::Done(completion.content));
             }
 
             for call in &completion.tool_calls {
@@ -350,20 +390,11 @@ impl TurnRunner {
                 })
                 .await?;
             }
-
-            // Each host tool call is blocking filesystem work; spawn_blocking runs them on
-            // separate OS threads so they genuinely execute in parallel.
-            let workspace = inner.workspace.clone();
-            let mut handles = Vec::with_capacity(completion.tool_calls.len());
-            for call in completion.tool_calls.clone() {
-                let workspace = workspace.clone();
-                handles.push(tokio::task::spawn_blocking(move || {
-                    harness_tools::call_by_name(&workspace, &call.name, &call.arguments)
-                }));
-            }
-            let mut results = Vec::with_capacity(handles.len());
-            for handle in handles {
-                results.push(handle.await.context("tool call task panicked")?);
+            let results = self
+                .run_tool_calls(shared, thread, &completion.tool_calls)
+                .await?;
+            if self.cancel.is_cancelled() {
+                return Ok(ThreadEnd::Cancelled);
             }
 
             for (call, result) in completion.tool_calls.iter().zip(results) {
@@ -382,7 +413,129 @@ impl TurnRunner {
                 });
             }
             // And again after the tool step, so the round trip is durable too.
-            self.snapshot_thread(session_id, &thread_id, &messages, usage.as_ref())?;
+            self.snapshot_thread(&shared.session_id, thread, messages, usage.as_ref())?;
+        }
+    }
+
+    /// Runs one round's calls, returning results in the calls' order. Host tools run in
+    /// parallel on blocking threads; `create_sub_agent` calls become child threads, and this
+    /// thread waits for all of them (only leaf threads run).
+    async fn run_tool_calls(
+        &self,
+        shared: &Arc<TurnShared>,
+        thread: &ThreadInfo,
+        calls: &[ToolCallResult],
+    ) -> Result<Vec<ToolResult>> {
+        let mut results: Vec<Option<ToolResult>> = vec![None; calls.len()];
+        let mut host = Vec::new();
+        let mut children = Vec::new();
+        for (index, call) in calls.iter().enumerate() {
+            match Builtin::find(&call.name, thread.is_root(), &self.inner.config.agent) {
+                Some(Builtin::CreateSubAgent) => match SubAgentRequest::parse(&call.arguments) {
+                    Ok(request) => children.push((index, request)),
+                    Err(message) => results[index] = Some(tool_error(&message)),
+                },
+                None => {
+                    let workspace = self.inner.workspace.clone();
+                    let call = call.clone();
+                    host.push((
+                        index,
+                        tokio::task::spawn_blocking(move || {
+                            harness_tools::call_by_name(&workspace, &call.name, &call.arguments)
+                        }),
+                    ));
+                }
+            }
+        }
+
+        if !children.is_empty() {
+            let permits = Arc::new(Semaphore::new(MAX_PARALLEL_SUB_AGENTS));
+            let mut running = JoinSet::new();
+            for (index, request) in children {
+                let child = self.clone().run_child(ChildSpec {
+                    shared: Arc::clone(shared),
+                    parent: thread.id.clone(),
+                    request,
+                    permits: Arc::clone(&permits),
+                });
+                running.spawn(async move { (index, child.await) });
+            }
+            while let Some(joined) = running.join_next().await {
+                let (index, result) = joined.context("subagent task panicked")?;
+                results[index] = Some(result);
+            }
+        }
+        for (index, handle) in host {
+            results[index] = Some(handle.await.context("tool call task panicked")?);
+        }
+        results
+            .into_iter()
+            .map(|result| result.ok_or_else(|| anyhow!("a tool call produced no result")))
+            .collect()
+    }
+
+    /// A subagent thread as a boxed future: it waits for a free slot, runs its own loop, and
+    /// resolves to the parent's tool result. Boxed because a thread's loop spawns these.
+    fn run_child(self, spec: ChildSpec) -> Pin<Box<dyn Future<Output = ToolResult> + Send>> {
+        Box::pin(async move {
+            let Ok(_permit) = spec.permits.acquire_owned().await else {
+                return tool_error("subagent scheduler closed");
+            };
+            let thread = ThreadInfo {
+                id: new_id(),
+                parent: Some(spec.parent),
+                title: Some(spec.request.name),
+            };
+            let outcome = self
+                .run_child_thread(&spec.shared, &thread, spec.request.input)
+                .await;
+            let (result, error) = match outcome {
+                Ok(text) => (
+                    ToolResult {
+                        content: text,
+                        blocked: false,
+                    },
+                    None,
+                ),
+                Err(e) => {
+                    let error = self.inner.redactor.apply(&format!("{e:#}"));
+                    (tool_error(&error), Some(error))
+                }
+            };
+            // A store failure here must not lose the parent's result; the child is over anyway.
+            let _ = self
+                .emit(EventKind::ThreadDone {
+                    thread_id: thread.id,
+                    error,
+                })
+                .await;
+            result
+        })
+    }
+
+    async fn run_child_thread(
+        &self,
+        shared: &Arc<TurnShared>,
+        thread: &ThreadInfo,
+        input: String,
+    ) -> Result<String> {
+        self.emit(EventKind::ThreadCreated {
+            thread_id: thread.id.clone(),
+            parent: thread.parent.clone().unwrap_or_default(),
+            title: thread.title.clone().unwrap_or_default(),
+        })
+        .await?;
+        let mut messages = vec![
+            text_message(Role::System, shared.child_prompt.clone()),
+            text_message(Role::User, input),
+        ];
+        let mut usage = None;
+        match self
+            .run_thread(shared, thread, &mut messages, &mut usage)
+            .await?
+        {
+            ThreadEnd::Done(text) => Ok(text),
+            ThreadEnd::Cancelled => bail!("cancelled"),
         }
     }
 
@@ -391,17 +544,20 @@ impl TurnRunner {
     fn snapshot_thread(
         &self,
         session_id: &str,
-        thread_id: &str,
+        thread: &ThreadInfo,
         messages: &[Message],
         usage: Option<&Usage>,
     ) -> Result<()> {
         let history = &messages[1..];
-        let context_json = self.inner.redactor.apply(&serde_json::to_string(history)?);
+        let redactor = &self.inner.redactor;
+        let context_json = redactor.apply(&serde_json::to_string(history)?);
         let context_usage_json = usage.and_then(|u| serde_json::to_string(u).ok());
+        let title = thread.title.as_deref().map(|t| redactor.apply(t));
         self.inner.store.upsert_thread(&UpsertThread {
-            id: thread_id,
+            id: &thread.id,
             session_id,
-            parent_id: None,
+            parent_id: thread.parent.as_deref(),
+            title: title.as_deref(),
             context_json: &context_json,
             context_usage_json: context_usage_json.as_deref(),
         })?;
@@ -430,6 +586,57 @@ impl TurnRunner {
     async fn forward(&self, kind: EventKind) {
         // A consumer that stopped listening doesn't stop the turn; it still runs to completion.
         let _ = self.tx.send(Event { id: new_id(), kind }).await;
+    }
+}
+
+/// What every thread of one turn shares.
+struct TurnShared {
+    session_id: String,
+    client: ChatClient,
+    /// The system prompt each subagent thread starts with.
+    child_prompt: String,
+}
+
+/// A thread's identity: the root has no parent; a subagent names its parent and its title.
+struct ThreadInfo {
+    id: String,
+    parent: Option<String>,
+    title: Option<String>,
+}
+
+impl ThreadInfo {
+    fn is_root(&self) -> bool {
+        self.parent.is_none()
+    }
+}
+
+enum ThreadEnd {
+    /// The thread's final assistant text.
+    Done(String),
+    Cancelled,
+}
+
+struct ChildSpec {
+    shared: Arc<TurnShared>,
+    parent: String,
+    request: SubAgentRequest,
+    permits: Arc<Semaphore>,
+}
+
+fn text_message(role: Role, content: String) -> Message {
+    Message {
+        role,
+        content,
+        tool_calls: Vec::new(),
+        tool_call_id: None,
+    }
+}
+
+/// A failure the model sees as a tool result, in the host tools' `{"error": ...}` shape.
+fn tool_error(message: &str) -> ToolResult {
+    ToolResult {
+        content: serde_json::json!({ "error": message }).to_string(),
+        blocked: false,
     }
 }
 
