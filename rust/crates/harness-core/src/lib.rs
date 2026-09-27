@@ -21,7 +21,9 @@ pub use config::{
     AgentConfig, Config, ConfigPaths, Provider, ProviderConfig, Providers, SkillsConfig,
 };
 pub use event::{Event, EventKind, ModelOutput, TurnState};
-pub use harness::{Answer, Harness, HarnessOptions, LAST_PROVIDER_SETTING, TurnHandle, UndoOutcome};
+pub use harness::{
+    Answer, Harness, HarnessOptions, LAST_PROVIDER_SETTING, TurnHandle, UndoOutcome,
+};
 pub use harness_llm::Usage;
 pub use harness_mcp::{McpServerConfig, McpTransport};
 pub use harness_store::{Session, Store};
