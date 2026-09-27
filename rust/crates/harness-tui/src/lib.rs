@@ -19,8 +19,8 @@ use crossterm::terminal::{
 };
 use futures_util::StreamExt;
 use harness_core::{
-    Config, Event as HarnessEvent, EventKind, Harness, HarnessOptions, Provider, Store, TurnHandle,
-    api_key_from_env, default_db_path,
+    Config, Event as HarnessEvent, EventKind, Harness, HarnessOptions, LAST_PROVIDER_SETTING,
+    Provider, Store, TurnHandle, api_key_from_env, default_db_path,
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -29,7 +29,6 @@ use tokio::time::interval;
 use crate::app::{App, Screen};
 
 const FRAME_INTERVAL: Duration = Duration::from_millis(33);
-const LAST_PROVIDER_KEY: &str = "last_provider";
 
 /// Runs the TUI to completion. The terminal is restored on every exit path, including an error.
 pub async fn run() -> Result<()> {
@@ -38,7 +37,7 @@ pub async fn run() -> Result<()> {
     let mut store = Some(Store::open(&default_db_path()?).context("opening the database")?);
     let last_provider = store
         .as_ref()
-        .and_then(|s| s.get_setting(LAST_PROVIDER_KEY).ok().flatten())
+        .and_then(|s| s.get_setting(LAST_PROVIDER_SETTING).ok().flatten())
         .and_then(|value| value.parse().ok())
         .unwrap_or(Provider::DeepSeek);
     let env_workspace = std::env::var_os("WORKSPACE").map(PathBuf::from);
@@ -143,6 +142,54 @@ fn handle_terminal_event(
                 }
                 Ok(false)
             }
+            Action::NewSession => {
+                if let Some(h) = harness.as_ref() {
+                    *session_id = h.create_session()?;
+                    if let Some(main) = app.main_mut() {
+                        main.start_new_session();
+                    }
+                }
+                Ok(false)
+            }
+            Action::ListSessions => {
+                if let Some(h) = harness.as_ref() {
+                    let sessions = h.sessions()?;
+                    if let Some(main) = app.main_mut() {
+                        main.open_sessions(sessions);
+                    }
+                }
+                Ok(false)
+            }
+            Action::ResumeSession(id) => {
+                if let Some(h) = harness.as_ref()
+                    && let Some(session) = h.session(&id)?
+                {
+                    *session_id = id;
+                    if let Some(main) = app.main_mut() {
+                        main.resume_session(session);
+                    }
+                }
+                Ok(false)
+            }
+            Action::CloseOverlay => {
+                if let Some(main) = app.main_mut() {
+                    main.close_overlay();
+                }
+                Ok(false)
+            }
+            Action::ToggleProvider => {
+                if let Some(h) = harness.as_ref()
+                    && let Some(main) = app.main_mut()
+                {
+                    let next = match main.provider {
+                        Provider::DeepSeek => Provider::Qwen,
+                        Provider::Qwen => Provider::DeepSeek,
+                    };
+                    h.switch_provider(session_id, next)?;
+                    main.set_provider(next);
+                }
+                Ok(false)
+            }
             Action::ConfirmStartup {
                 provider,
                 workspace,
@@ -190,6 +237,11 @@ enum Action {
     Quit,
     Cancel,
     Send(String),
+    NewSession,
+    ListSessions,
+    ResumeSession(String),
+    CloseOverlay,
+    ToggleProvider,
     ConfirmStartup {
         provider: Provider,
         workspace: String,
@@ -240,6 +292,11 @@ fn interpret_key(app: &mut App, key: KeyEvent) -> Action {
                 };
             }
             state.quit_armed = false;
+
+            if let Some(overlay) = &mut state.overlay {
+                return interpret_overlay_key(overlay, key.code);
+            }
+
             match key.code {
                 KeyCode::Enter if key.modifiers.contains(KeyModifiers::ALT) => {
                     state.input.push('\n');
@@ -250,10 +307,13 @@ fn interpret_key(app: &mut App, key: KeyEvent) -> Action {
                         return Action::None;
                     }
                     state.input.clear();
-                    if text == "/quit" {
-                        return Action::Quit;
+                    match text.as_str() {
+                        "/quit" => return Action::Quit,
+                        "/new" => return Action::NewSession,
+                        "/sessions" => return Action::ListSessions,
+                        "/provider" => return Action::ToggleProvider,
+                        _ => return Action::Send(text),
                     }
-                    return Action::Send(text);
                 }
                 KeyCode::Backspace => {
                     state.input.pop();
@@ -266,11 +326,35 @@ fn interpret_key(app: &mut App, key: KeyEvent) -> Action {
     }
 }
 
+/// Key handling while the `/sessions` overlay is open: it captures every key until it closes.
+fn interpret_overlay_key(overlay: &mut app::Overlay, code: KeyCode) -> Action {
+    match overlay {
+        app::Overlay::Sessions { sessions, selected } => match code {
+            KeyCode::Up => {
+                *selected = selected.saturating_sub(1);
+                Action::None
+            }
+            KeyCode::Down => {
+                if *selected + 1 < sessions.len() {
+                    *selected += 1;
+                }
+                Action::None
+            }
+            KeyCode::Enter => match sessions.get(*selected) {
+                Some(session) => Action::ResumeSession(session.id.clone()),
+                None => Action::CloseOverlay,
+            },
+            KeyCode::Esc => Action::CloseOverlay,
+            _ => Action::None,
+        },
+    }
+}
+
 /// Persists the chosen provider, opens the harness against `workspace`, and creates its session.
 /// A failure here is treated as fatal: the config is embedded and the key was already confirmed
 /// present, so this should not fail in practice.
 fn open_harness(store: Store, provider: Provider, workspace: PathBuf) -> Result<(Harness, String)> {
-    store.set_setting(LAST_PROVIDER_KEY, provider.as_str())?;
+    store.set_setting(LAST_PROVIDER_SETTING, provider.as_str())?;
     let config = Config::embedded_default()?;
     let api_key = api_key_from_env()?;
     let harness = Harness::open(HarnessOptions {

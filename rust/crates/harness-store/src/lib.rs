@@ -10,6 +10,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0001.sql"),
     include_str!("../migrations/0002.sql"),
+    include_str!("../migrations/0003.sql"),
 ];
 
 const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
@@ -62,6 +63,26 @@ pub struct Turn {
     pub usage_json: Option<String>,
     pub started_at: String,
     pub finished_at: Option<String>,
+}
+
+/// A thread-context snapshot to upsert after an LLM or tool step. `parent_id: None` marks the
+/// session's root thread.
+pub struct UpsertThread<'a> {
+    pub id: &'a str,
+    pub session_id: &'a str,
+    pub parent_id: Option<&'a str>,
+    pub context_json: &'a str,
+    pub context_usage_json: Option<&'a str>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Thread {
+    pub id: String,
+    pub session_id: String,
+    pub parent_id: Option<String>,
+    pub context_json: String,
+    pub context_usage_json: Option<String>,
+    pub updated_at: String,
 }
 
 pub struct NewEvent<'a> {
@@ -134,6 +155,54 @@ impl Store {
             )
             .optional()?;
         Ok(session)
+    }
+
+    /// All sessions, most recently updated first, for `/sessions` to list.
+    pub fn sessions(&self) -> Result<Vec<Session>> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, title, workspace, provider, model, created_at, updated_at
+             FROM session ORDER BY updated_at DESC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(Session {
+                id: r.get(0)?,
+                title: r.get(1)?,
+                workspace: r.get(2)?,
+                provider: r.get(3)?,
+                model: r.get(4)?,
+                created_at: r.get(5)?,
+                updated_at: r.get(6)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Sets the session's title if it doesn't have one yet; later calls are no-ops, matching
+    /// the reference implementation's first-write-wins semantics.
+    pub fn set_session_title_if_unset(&self, session_id: &str, title: &str) -> Result<()> {
+        self.conn()?.execute(
+            "UPDATE session SET title = ?2 WHERE id = ?1 AND title IS NULL",
+            params![session_id, title],
+        )?;
+        Ok(())
+    }
+
+    /// Switches the session's provider and model, e.g. for `/provider`.
+    pub fn set_session_provider(
+        &self,
+        session_id: &str,
+        provider: &str,
+        model: &str,
+    ) -> Result<()> {
+        let conn = self.conn()?;
+        conn.execute(
+            &format!(
+                "UPDATE session SET provider = ?2, model = ?3, updated_at = {NOW} WHERE id = ?1"
+            ),
+            params![session_id, provider, model],
+        )?;
+        Ok(())
     }
 
     /// Inserts a running turn and returns its 1-based sequence number within the session.
@@ -216,6 +285,53 @@ impl Store {
             params![key, value],
         )?;
         Ok(())
+    }
+
+    /// Upserts a thread's context snapshot after an LLM or tool step.
+    pub fn upsert_thread(&self, t: &UpsertThread) -> Result<()> {
+        let conn = self.conn()?;
+        conn.execute(
+            &format!(
+                "INSERT INTO thread (id, session_id, parent_id, context_json, context_usage_json, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, {NOW})
+                 ON CONFLICT (id) DO UPDATE SET
+                     context_json = excluded.context_json,
+                     context_usage_json = excluded.context_usage_json,
+                     updated_at = {NOW}"
+            ),
+            params![
+                t.id,
+                t.session_id,
+                t.parent_id,
+                t.context_json,
+                t.context_usage_json
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// The session's root thread (no parent) — the one turns continue from and `/sessions`
+    /// resumes.
+    pub fn root_thread(&self, session_id: &str) -> Result<Option<Thread>> {
+        let thread = self
+            .conn()?
+            .query_row(
+                "SELECT id, session_id, parent_id, context_json, context_usage_json, updated_at
+                 FROM thread WHERE session_id = ?1 AND parent_id IS NULL",
+                [session_id],
+                |r| {
+                    Ok(Thread {
+                        id: r.get(0)?,
+                        session_id: r.get(1)?,
+                        parent_id: r.get(2)?,
+                        context_json: r.get(3)?,
+                        context_usage_json: r.get(4)?,
+                        updated_at: r.get(5)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(thread)
     }
 
     /// A turn's durable events in the order they were written.
