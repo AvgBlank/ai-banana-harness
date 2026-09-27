@@ -59,6 +59,13 @@ pub enum EventKind {
     /// The thread's context was replaced by a summary; `usage` is the compacted context's size.
     #[serde(rename = "context.compacted")]
     ContextCompacted { thread_id: String, usage: Usage },
+    /// A remote MCP server needs a browser OAuth login; `url` is the address to open.
+    #[serde(rename = "mcp.auth_required")]
+    McpAuthRequired {
+        thread_id: String,
+        server: String,
+        url: String,
+    },
     /// A subagent thread started under `parent`; `title` is the name its parent gave it.
     #[serde(rename = "thread.created")]
     ThreadCreated {
@@ -106,6 +113,7 @@ impl EventKind {
             EventKind::ToolCall { .. } => "tool.call",
             EventKind::ToolResponse { .. } => "tool.response",
             EventKind::ContextCompacted { .. } => "context.compacted",
+            EventKind::McpAuthRequired { .. } => "mcp.auth_required",
             EventKind::ThreadCreated { .. } => "thread.created",
             EventKind::ThreadDone { .. } => "thread.done",
             EventKind::ToolApprovalRequired { .. } => "tool.approval_required",
@@ -121,6 +129,7 @@ impl EventKind {
             | EventKind::ToolCall { thread_id, .. }
             | EventKind::ToolResponse { thread_id, .. }
             | EventKind::ContextCompacted { thread_id, .. }
+            | EventKind::McpAuthRequired { thread_id, .. }
             | EventKind::ThreadCreated { thread_id, .. }
             | EventKind::ThreadDone { thread_id, .. }
             | EventKind::ToolApprovalRequired { thread_id, .. }

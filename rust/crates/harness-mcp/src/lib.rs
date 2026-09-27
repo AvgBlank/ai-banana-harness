@@ -1,5 +1,9 @@
 //! MCP client over rmcp. Callers see only this crate's boundary types, never rmcp's.
 
+mod oauth;
+
+pub use oauth::{OAuthContext, OAuthTokenStore};
+
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::process::Stdio;
@@ -8,6 +12,9 @@ use anyhow::{Context, Result, anyhow, bail};
 use rmcp::model::{CallToolRequestParams, CallToolResult, PaginatedRequestParams};
 use rmcp::service::RunningService;
 use rmcp::transport::TokioChildProcess;
+use rmcp::transport::streamable_http_client::{
+    StreamableHttpClientTransport, StreamableHttpClientTransportConfig,
+};
 use rmcp::{RoleClient, ServiceExt};
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -35,6 +42,16 @@ pub enum McpTransport {
         #[serde(default)]
         env: BTreeMap<String, String>,
     },
+    /// A streamable-HTTP server. `headers` values may contain `{env:VAR}`, expanded only when
+    /// the server is started. When `oauth` is set, headers are sent alongside the OAuth bearer
+    /// token rather than instead of it.
+    Remote {
+        url: String,
+        #[serde(default)]
+        headers: BTreeMap<String, String>,
+        #[serde(default)]
+        oauth: bool,
+    },
 }
 
 /// A tool as the server lists it.
@@ -58,24 +75,22 @@ pub struct McpClient {
 }
 
 impl McpClient {
-    /// Starts the server (a stdio child runs with `cwd` as its working directory) and completes
-    /// the MCP handshake.
-    pub async fn connect(config: &McpServerConfig, cwd: &Path) -> Result<Self> {
-        let McpTransport::Local { command, env } = &config.transport;
-        let (program, args) = command
-            .split_first()
-            .ok_or_else(|| anyhow!("`command` is empty"))?;
-        let mut cmd = tokio::process::Command::new(program);
-        cmd.args(args).current_dir(cwd);
-        for (key, value) in env {
-            cmd.env(key, expand_env(value)?);
-        }
-        // The server's stderr would scribble over the TUI.
-        let (transport, _) = TokioChildProcess::builder(cmd)
-            .stderr(Stdio::null())
-            .spawn()
-            .with_context(|| format!("starting `{program}`"))?;
-        let service = ().serve(transport).await.context("MCP handshake failed")?;
+    /// Connects to `config`'s server (spawning a child for `Local`, or opening a streamable-HTTP
+    /// connection for `Remote`) and completes the MCP handshake. `oauth` is required, and used,
+    /// only for a `Remote` server with `oauth: true`.
+    pub async fn connect(
+        config: &McpServerConfig,
+        cwd: &Path,
+        oauth: Option<OAuthContext<'_>>,
+    ) -> Result<Self> {
+        let service = match &config.transport {
+            McpTransport::Local { command, env } => connect_local(command, env, cwd).await?,
+            McpTransport::Remote {
+                url,
+                headers,
+                oauth: needs_oauth,
+            } => connect_remote(url, headers, *needs_oauth, oauth).await?,
+        };
         Ok(Self { service })
     }
 
@@ -115,6 +130,57 @@ impl McpClient {
             .with_context(|| format!("tools/call {name} failed"))?;
         Ok(render(&result))
     }
+}
+
+async fn connect_local(
+    command: &[String],
+    env: &BTreeMap<String, String>,
+    cwd: &Path,
+) -> Result<RunningService<RoleClient, ()>> {
+    let (program, args) = command
+        .split_first()
+        .ok_or_else(|| anyhow!("`command` is empty"))?;
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.args(args).current_dir(cwd);
+    for (key, value) in env {
+        cmd.env(key, expand_env(value)?);
+    }
+    // The server's stderr would scribble over the TUI.
+    let (transport, _) = TokioChildProcess::builder(cmd)
+        .stderr(Stdio::null())
+        .spawn()
+        .with_context(|| format!("starting `{program}`"))?;
+    ().serve(transport).await.context("MCP handshake failed")
+}
+
+async fn connect_remote(
+    url: &str,
+    headers: &BTreeMap<String, String>,
+    needs_oauth: bool,
+    oauth: Option<OAuthContext<'_>>,
+) -> Result<RunningService<RoleClient, ()>> {
+    // Idempotent: harness-llm's ChatClient also installs this, but a remote MCP server can be
+    // the first thing to build a reqwest client (e.g. in a test with no LLM client at all).
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
+    let mut expanded = std::collections::HashMap::with_capacity(headers.len());
+    for (name, value) in headers {
+        let header_name = http::HeaderName::try_from(name.as_str())
+            .with_context(|| format!("`{name}` is not a valid header name"))?;
+        let header_value = http::HeaderValue::from_str(&expand_env(value)?)
+            .with_context(|| format!("`{name}`'s value is not a valid header value"))?;
+        expanded.insert(header_name, header_value);
+    }
+
+    if !needs_oauth {
+        let config =
+            StreamableHttpClientTransportConfig::with_uri(url.to_string()).custom_headers(expanded);
+        let transport = StreamableHttpClientTransport::from_config(config);
+        return ().serve(transport).await.context("MCP handshake failed");
+    }
+
+    let ctx = oauth.ok_or_else(|| anyhow!("server `{url}` needs `oauth` but none was supplied"))?;
+    oauth::connect(url, expanded, ctx).await
 }
 
 /// The reference implementation's rendering: an error becomes `{"error": text}`, structured

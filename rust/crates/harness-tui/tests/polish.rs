@@ -139,6 +139,25 @@ fn a_cancelled_turn_gets_a_cancelled_summary() {
 }
 
 #[test]
+fn the_mcp_auth_modal_renders_the_login_url() {
+    let mut app = main_app();
+    app.main_mut()
+        .unwrap()
+        .apply_event(event(EventKind::McpAuthRequired {
+            thread_id: "thread".to_string(),
+            server: "docs".to_string(),
+            url: "https://auth.example.com/authorize?client_id=abc".to_string(),
+        }));
+
+    let view = rendered(&app, 100, 20);
+    assert!(view.contains("docs"), "{view}");
+    assert!(
+        view.contains("https://auth.example.com/authorize?client_id=abc"),
+        "{view}"
+    );
+}
+
+#[test]
 fn the_help_overlay_lists_commands_and_keys() {
     let mut app = main_app();
     app.main_mut().unwrap().open_help();

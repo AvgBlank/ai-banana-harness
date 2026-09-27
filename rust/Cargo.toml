@@ -26,6 +26,14 @@ sse-stream = "0.2.6"
 
 # MCP: rmcp moves fast, so it is pinned exactly.
 rmcp = { version = "=3.4.1", default-features = false, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest-tls-no-provider", "auth"] }
+http = "1.5.0"
+# Opens the platform browser for remote-MCP OAuth logins.
+open = "5.4.4"
+async-trait = "0.1.92"
+# Already pulled in transitively by rmcp's `auth` feature; pinned directly (no default
+# features — only its plain data types are used) so harness-core's tests can build a
+# `StoredCredentials` fixture without guessing its JSON shape.
+oauth2 = { version = "5.0.0", default-features = false }
 
 # TUI
 ratatui = "0.30.2"

@@ -11,6 +11,11 @@ rmcp.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
+http.workspace = true
+open.workspace = true
+async-trait.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

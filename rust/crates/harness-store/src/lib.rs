@@ -13,6 +13,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0003.sql"),
     include_str!("../migrations/0004.sql"),
     include_str!("../migrations/0005.sql"),
+    include_str!("../migrations/0006.sql"),
 ];
 
 const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
@@ -308,6 +309,38 @@ impl Store {
              ON CONFLICT (key) DO UPDATE SET value = excluded.value",
             params![key, value],
         )?;
+        Ok(())
+    }
+
+    /// Reads a remote MCP server's stored OAuth credentials JSON, if any.
+    pub fn get_mcp_oauth_token(&self, server: &str) -> Result<Option<String>> {
+        let value = self
+            .conn()?
+            .query_row(
+                "SELECT credentials_json FROM mcp_oauth_token WHERE server = ?1",
+                [server],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(value)
+    }
+
+    /// Upserts a remote MCP server's OAuth credentials JSON.
+    pub fn set_mcp_oauth_token(&self, server: &str, credentials_json: &str) -> Result<()> {
+        self.conn()?.execute(
+            &format!(
+                "INSERT INTO mcp_oauth_token (server, credentials_json, updated_at) VALUES (?1, ?2, {NOW})
+                 ON CONFLICT (server) DO UPDATE SET credentials_json = excluded.credentials_json, updated_at = {NOW}"
+            ),
+            params![server, credentials_json],
+        )?;
+        Ok(())
+    }
+
+    /// Removes a remote MCP server's stored OAuth credentials, e.g. after the server rejects them.
+    pub fn clear_mcp_oauth_token(&self, server: &str) -> Result<()> {
+        self.conn()?
+            .execute("DELETE FROM mcp_oauth_token WHERE server = ?1", [server])?;
         Ok(())
     }
 

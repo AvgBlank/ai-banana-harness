@@ -484,6 +484,10 @@ fn interpret_overlay_key(overlay: &mut app::Overlay, code: KeyCode) -> Action {
             KeyCode::Esc => Action::Cancel,
             _ => Action::None,
         },
+        app::Overlay::McpAuth { .. } => match code {
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => Action::CloseOverlay,
+            _ => Action::None,
+        },
     }
 }
 
