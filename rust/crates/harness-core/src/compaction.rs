@@ -14,8 +14,8 @@ const PROMPT_TOKENS: u64 = 931;
 /// The continuation message's token count, added to the summary's.
 const CONTINUATION_TOKENS: u64 = 42;
 
-const INTERNAL_START: &str = "<bh-internal>";
-const INTERNAL_END: &str = "</bh-internal>";
+pub(crate) const INTERNAL_START: &str = "<bh-internal>";
+pub(crate) const INTERNAL_END: &str = "</bh-internal>";
 
 const CONTINUATION: &str = "The above is the summarised context of the work so far. The Agent must not repeat or re-run any work that was already completed. If results were already obtained, the Agent should present them directly.";
 

@@ -34,6 +34,10 @@ const HELP_COMMANDS: &[(&str, &str)] = &[
     ("/new", "start a fresh session"),
     ("/sessions", "list and resume earlier sessions"),
     ("/provider", "switch between DeepSeek and Qwen"),
+    (
+        "/undo",
+        "restore the workspace to the last turn's checkpoint",
+    ),
     ("/help", "show this help"),
     ("/quit", "exit"),
 ];

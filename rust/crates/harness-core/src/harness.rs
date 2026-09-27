@@ -2,6 +2,7 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -9,7 +10,9 @@ use harness_llm::{
     ChatClient, ChatEvent, ClientConfig, Completion, Dialect, Message, Role, ToolCallResult,
     ToolDefinition, Usage,
 };
-use harness_store::{FinishTurn, NewEvent, NewSession, NewTurn, Session, Store, UpsertThread};
+use harness_store::{
+    FinishTurn, NewCheckpoint, NewEvent, NewSession, NewTurn, Session, Store, UpsertThread,
+};
 use harness_tools::ToolResult;
 use tokio::sync::{Semaphore, mpsc};
 use tokio::task::JoinSet;
@@ -17,13 +20,19 @@ use tokio_util::sync::CancellationToken;
 use ulid::{Generator, Ulid};
 
 use crate::builtins::{Builtin, MAX_PARALLEL_SUB_AGENTS, SubAgentRequest};
+use crate::checkpoint;
 use crate::compaction;
 use crate::config::{Config, Provider};
 use crate::event::{Event, EventKind, ModelOutput, TurnState};
 use crate::instructions::{SystemPromptInput, system_prompt};
 use crate::mcp::{McpRegistry, McpServerStatus};
+use crate::safety::{DoomLoop, DoomLoopAction, TurnLimits};
 use crate::skills::load_skills;
 use crate::tools::{ToolInvocation, TurnTools};
+
+/// Host tool names whose call mutates the workspace, so the turn's first one triggers a
+/// checkpoint. Matches `harness-tui`'s `ToolCallItem::expandable`.
+const MUTATING_TOOLS: [&str; 3] = ["write_file", "edit", "bash"];
 
 /// The setting key that stores the provider last chosen, read back to preselect the startup
 /// popup and updated whenever `/provider` switches a session.
@@ -69,6 +78,12 @@ impl TurnHandle {
     pub fn cancel(&self) {
         self.cancel.cancel();
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UndoOutcome {
+    Restored,
+    NothingToUndo,
 }
 
 impl Harness {
@@ -148,6 +163,21 @@ impl Harness {
     /// The context size at which a thread on `provider` is compacted, e.g. for a usage bar.
     pub fn compaction_threshold(&self, provider: Provider) -> u64 {
         compaction::threshold(self.inner.config.provider(provider))
+    }
+
+    /// `/undo`: restores the workspace to the checkpoint taken before the session's last turn's
+    /// first mutating call, and removes the files that turn created. `NothingToUndo` when that
+    /// turn never mutated the workspace (nothing was checkpointed) or there is no last turn.
+    pub fn undo(&self, session_id: &str) -> Result<UndoOutcome> {
+        let inner = &self.inner;
+        let Some(last_turn) = inner.store.turns(session_id)?.pop() else {
+            return Ok(UndoOutcome::NothingToUndo);
+        };
+        let Some(row) = inner.store.checkpoint(&last_turn.id)? else {
+            return Ok(UndoOutcome::NothingToUndo);
+        };
+        checkpoint::restore(&inner.workspace, &row)?;
+        Ok(UndoOutcome::Restored)
     }
 
     /// Starts a turn in the background. The stream always ends with `turn.done`.
@@ -308,6 +338,8 @@ impl TurnRunner {
             child_prompt,
             tools,
             threshold: compaction::threshold(provider_config),
+            limits: TurnLimits::new(&inner.config.agent),
+            checkpoint_taken: AtomicBool::new(false),
         });
         let root = ThreadInfo {
             id: thread_id,
@@ -349,8 +381,10 @@ impl TurnRunner {
         };
         let mut context_usage = stored_usage.unwrap_or_default();
         context_usage.prompt_tokens += compaction::estimate_tokens(uncounted);
+        let mut doom_loop = DoomLoop::default();
 
         loop {
+            shared.limits.check()?;
             if compaction::is_due(&context_usage, shared.threshold) {
                 let request = compaction::summary_request(&messages[1..]);
                 let Some(summary) = self.complete(&shared.client, &request).await? else {
@@ -455,6 +489,7 @@ impl TurnRunner {
                 return Ok(ThreadEnd::Done(completion.content));
             }
 
+            let mut doom_warning = None;
             for call in &completion.tool_calls {
                 self.emit(EventKind::ToolCall {
                     thread_id: thread_id.clone(),
@@ -463,6 +498,11 @@ impl TurnRunner {
                     arguments: call.arguments.clone(),
                 })
                 .await?;
+                match doom_loop.note(&call.name, &call.arguments) {
+                    DoomLoopAction::None => {}
+                    DoomLoopAction::Warn(message) => doom_warning = Some(message),
+                    DoomLoopAction::End(message) => bail!(message),
+                }
             }
             let results = self
                 .run_tool_calls(shared, thread, &completion.tool_calls)
@@ -508,6 +548,9 @@ impl TurnRunner {
                     tool_call_id: Some(call.id.clone()),
                 });
             }
+            if let Some(message) = doom_warning {
+                messages.push(text_message(Role::User, message));
+            }
             context_usage.prompt_tokens += compaction::estimate_tokens(&messages[first_result..]);
             // And again after the tool step, so the round trip is durable too.
             self.snapshot_thread(&shared.session_id, thread, messages, &context_usage)?;
@@ -523,6 +566,7 @@ impl TurnRunner {
         thread: &ThreadInfo,
         calls: &[ToolCallResult],
     ) -> Result<Vec<ToolResult>> {
+        self.checkpoint_if_first_mutation(shared, calls).await?;
         let mut results: Vec<Option<ToolResult>> = vec![None; calls.len()];
         let mut other = Vec::new();
         let mut children = Vec::new();
@@ -574,6 +618,40 @@ impl TurnRunner {
             .into_iter()
             .map(|result| result.ok_or_else(|| anyhow!("a tool call produced no result")))
             .collect()
+    }
+
+    /// Takes the turn's checkpoint the first time any thread is about to run a mutating host
+    /// tool call, in a git workspace. A no-op every other time (including a non-git workspace,
+    /// where `checkpoint::capture` returns `None`).
+    async fn checkpoint_if_first_mutation(
+        &self,
+        shared: &Arc<TurnShared>,
+        calls: &[ToolCallResult],
+    ) -> Result<()> {
+        let mutates = calls
+            .iter()
+            .any(|call| MUTATING_TOOLS.contains(&call.name.as_str()));
+        if !mutates || shared.checkpoint_taken.swap(true, Ordering::SeqCst) {
+            return Ok(());
+        }
+        let inner = Arc::clone(&self.inner);
+        let turn_id = self.turn_id.clone();
+        let session_id = shared.session_id.clone();
+        tokio::task::spawn_blocking(move || {
+            let Some(snapshot) = checkpoint::capture(&inner.workspace, &turn_id) else {
+                return;
+            };
+            let untracked_json = snapshot.untracked_json();
+            let _ = inner.store.insert_checkpoint(&NewCheckpoint {
+                turn_id: &turn_id,
+                session_id: &session_id,
+                head_sha: &snapshot.head_sha,
+                stash_ref: snapshot.stash_ref.as_deref(),
+                untracked_json: &untracked_json,
+            });
+        })
+        .await
+        .context("checkpoint task panicked")
     }
 
     /// A subagent thread as a boxed future: it waits for a free slot, runs its own loop, and
@@ -719,6 +797,10 @@ struct TurnShared {
     child_prompt: String,
     tools: Arc<TurnTools>,
     threshold: u64,
+    /// The turn's LLM-call/wall-clock budget, checked by every thread before each LLM call.
+    limits: TurnLimits,
+    /// Set by whichever thread's tool call is the turn's first mutating one.
+    checkpoint_taken: AtomicBool,
 }
 
 /// A thread's identity: the root has no parent; a subagent names its parent and its title.

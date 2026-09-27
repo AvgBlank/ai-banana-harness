@@ -12,6 +12,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0002.sql"),
     include_str!("../migrations/0003.sql"),
     include_str!("../migrations/0004.sql"),
+    include_str!("../migrations/0005.sql"),
 ];
 
 const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
@@ -86,6 +87,26 @@ pub struct Thread {
     pub context_json: String,
     pub context_usage_json: Option<String>,
     pub updated_at: String,
+}
+
+/// A turn's pre-mutation git snapshot to record, taken before its first mutating tool call.
+pub struct NewCheckpoint<'a> {
+    pub turn_id: &'a str,
+    pub session_id: &'a str,
+    pub head_sha: &'a str,
+    /// `None` when the worktree matched `head_sha` exactly, so there was nothing to stash.
+    pub stash_ref: Option<&'a str>,
+    /// A JSON array of the workspace-relative paths that were untracked at checkpoint time.
+    pub untracked_json: &'a str,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Checkpoint {
+    pub turn_id: String,
+    pub session_id: String,
+    pub head_sha: String,
+    pub stash_ref: Option<String>,
+    pub untracked_json: String,
 }
 
 pub struct NewEvent<'a> {
@@ -336,6 +357,45 @@ impl Store {
         ))?;
         let rows = stmt.query_map([session_id], thread_row)?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Records a turn's pre-mutation checkpoint. One per turn: called at most once, on the
+    /// turn's first mutating tool call.
+    pub fn insert_checkpoint(&self, c: &NewCheckpoint) -> Result<()> {
+        self.conn()?.execute(
+            "INSERT INTO checkpoint (turn_id, session_id, head_sha, stash_ref, untracked_json)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                c.turn_id,
+                c.session_id,
+                c.head_sha,
+                c.stash_ref,
+                c.untracked_json
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// The checkpoint recorded for `turn_id`, if its turn ever made a mutating tool call.
+    pub fn checkpoint(&self, turn_id: &str) -> Result<Option<Checkpoint>> {
+        let checkpoint = self
+            .conn()?
+            .query_row(
+                "SELECT turn_id, session_id, head_sha, stash_ref, untracked_json
+                 FROM checkpoint WHERE turn_id = ?1",
+                [turn_id],
+                |r| {
+                    Ok(Checkpoint {
+                        turn_id: r.get(0)?,
+                        session_id: r.get(1)?,
+                        head_sha: r.get(2)?,
+                        stash_ref: r.get(3)?,
+                        untracked_json: r.get(4)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(checkpoint)
     }
 
     /// A turn's durable events in the order they were written.

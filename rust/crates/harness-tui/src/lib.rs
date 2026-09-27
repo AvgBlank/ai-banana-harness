@@ -202,6 +202,16 @@ fn handle_terminal_event(
                 }
                 Ok(Flow::Continue)
             }
+            Action::Undo => {
+                if let Some(h) = harness.as_ref() {
+                    let outcome = h.undo(session_id)?;
+                    if let Some(main) = app.main_mut() {
+                        main.modified_files = workspace_changes(&main.workspace);
+                        main.confirm_undo(outcome);
+                    }
+                }
+                Ok(Flow::Continue)
+            }
             Action::CloseOverlay => {
                 if let Some(main) = app.main_mut() {
                     main.close_overlay();
@@ -284,6 +294,7 @@ enum Action {
     NewSession,
     ListSessions,
     ResumeSession(String),
+    Undo,
     CloseOverlay,
     ToggleProvider,
     OpenEditor,
@@ -365,6 +376,7 @@ fn interpret_key(app: &mut App, key: KeyEvent) -> Action {
                         "/new" => return Action::NewSession,
                         "/sessions" => return Action::ListSessions,
                         "/provider" => return Action::ToggleProvider,
+                        "/undo" => return Action::Undo,
                         "/help" => state.open_help(),
                         _ => return Action::Send(text),
                     }
