@@ -40,6 +40,10 @@ pub struct MainState {
     pub last_error: Option<String>,
     /// A modal in front of the transcript, e.g. the `/sessions` picker.
     pub overlay: Option<Overlay>,
+    /// The context's size as of the last LLM call or compaction.
+    pub context_tokens: u64,
+    /// The size at which the context gets compacted; the usage bar is hidden until it's known.
+    pub context_limit: Option<u64>,
 }
 
 /// A picker shown over the main screen, closed by resuming a choice or by Esc.
@@ -155,6 +159,8 @@ impl MainState {
             quit_armed: false,
             last_error: None,
             overlay: None,
+            context_tokens: 0,
+            context_limit: None,
         }
     }
 
@@ -164,6 +170,7 @@ impl MainState {
         self.input.clear();
         self.turn_running = false;
         self.last_error = None;
+        self.context_tokens = 0;
         self.push_system_message("Started a new session.".to_string());
     }
 
@@ -189,6 +196,7 @@ impl MainState {
         self.input.clear();
         self.turn_running = false;
         self.last_error = None;
+        self.context_tokens = 0;
         self.push_system_message(format!("Resumed session: {label}"));
     }
 
@@ -246,9 +254,16 @@ impl MainState {
                 message_id,
                 message: Some(output),
             } => {
+                if let Some(usage) = &output.usage {
+                    self.context_tokens = usage.prompt_tokens + usage.completion_tokens;
+                }
                 if let Some(message) = self.assistant_message_mut(&thread_id, &message_id) {
                     message.content = output.content;
                 }
+            }
+            EventKind::ContextCompacted { usage, .. } => {
+                self.context_tokens = usage.prompt_tokens + usage.completion_tokens;
+                self.push_system_message("⟳ context compacted".to_string());
             }
             EventKind::TurnDone { state, error } => {
                 self.turn_running = false;

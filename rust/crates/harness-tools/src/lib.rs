@@ -6,6 +6,7 @@
 mod glob_tool;
 mod grep_tool;
 mod guardrail;
+mod large_output;
 pub mod pattern;
 mod read_file;
 
@@ -13,6 +14,8 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use serde_json::Value;
+
+pub use large_output::cap_large_outputs;
 
 /// One of the fixed host tools. Dispatch is a `match` in [`HostTool::call`], not a trait object.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,11 +67,13 @@ impl HostTool {
     }
 }
 
-/// A tool call's outcome: the text the model sees, and whether a guardrail blocked it.
+/// A tool call's outcome: the text the model sees, whether a guardrail blocked it, and whether
+/// the call failed (which [`cap_large_outputs`] truncates instead of spilling).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ToolResult {
     pub content: String,
     pub blocked: bool,
+    pub failed: bool,
 }
 
 impl ToolResult {
@@ -76,6 +81,7 @@ impl ToolResult {
         Self {
             content: content.into(),
             blocked: false,
+            failed: false,
         }
     }
 
@@ -85,6 +91,7 @@ impl ToolResult {
         Self {
             content: serde_json::json!({ "error": message.as_ref() }).to_string(),
             blocked: false,
+            failed: true,
         }
     }
 
@@ -94,6 +101,7 @@ impl ToolResult {
         Self {
             content: format!("Blocked by guardrail: {rule}"),
             blocked: true,
+            failed: true,
         }
     }
 }

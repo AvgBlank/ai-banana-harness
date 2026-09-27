@@ -4,13 +4,14 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 use anyhow::{Context, Result, anyhow, bail};
 use harness_llm::{
-    ChatClient, ChatEvent, ClientConfig, Dialect, Message, Role, ToolDefinition, Usage,
+    ChatClient, ChatEvent, ClientConfig, Completion, Dialect, Message, Role, ToolDefinition, Usage,
 };
 use harness_store::{FinishTurn, NewEvent, NewSession, NewTurn, Session, Store, UpsertThread};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use ulid::{Generator, Ulid};
 
+use crate::compaction;
 use crate::config::{Config, Provider};
 use crate::event::{Event, EventKind, ModelOutput, TurnState};
 use crate::instructions::{SystemPromptInput, system_prompt};
@@ -121,6 +122,11 @@ impl Harness {
             .store
             .set_setting(LAST_PROVIDER_SETTING, provider.as_str())?;
         Ok(())
+    }
+
+    /// The context size at which a thread on `provider` is compacted, e.g. for a usage bar.
+    pub fn compaction_threshold(&self, provider: Provider) -> u64 {
+        compaction::threshold(self.inner.config.provider(provider))
     }
 
     /// Starts a turn in the background. The stream always ends with `turn.done`.
@@ -252,6 +258,19 @@ impl TurnRunner {
             tool_calls: Vec::new(),
             tool_call_id: None,
         });
+        // The stored usage already counts the history; only what's new since is estimated.
+        let stored_usage: Option<Usage> = existing_thread
+            .as_ref()
+            .and_then(|t| t.context_usage_json.as_deref())
+            .and_then(|json| serde_json::from_str(json).ok());
+        let uncounted = if stored_usage.is_some() {
+            &messages[messages.len() - 1..]
+        } else {
+            &messages[..]
+        };
+        let mut context_usage = stored_usage.unwrap_or_default();
+        context_usage.prompt_tokens += compaction::estimate_tokens(uncounted);
+        let threshold = compaction::threshold(provider_config);
         let tool_specs = harness_tools::host_tool_specs();
         let tools: Vec<ToolDefinition> = tool_specs
             .into_iter()
@@ -265,6 +284,27 @@ impl TurnRunner {
         // One iteration per LLM round: stream an answer, and if it asked for tool calls, run
         // them and go around again. A round with no tool calls ends the turn.
         loop {
+            if compaction::is_due(&context_usage, threshold) {
+                let request = compaction::summary_request(&messages[1..]);
+                let Some(summary) = self.complete(&client, &request).await? else {
+                    return Ok(TurnState::Cancelled);
+                };
+                let compacted = compaction::compacted_context(summary.content);
+                let summary_tokens = summary.usage.map_or_else(
+                    || compaction::estimate_tokens(&compacted[..1]),
+                    |u| u.completion_tokens,
+                );
+                messages.truncate(1);
+                messages.extend(compacted);
+                context_usage = compaction::compacted_usage(summary_tokens);
+                self.emit(EventKind::ContextCompacted {
+                    thread_id: thread_id.clone(),
+                    usage: context_usage.clone(),
+                })
+                .await?;
+                self.snapshot_thread(session_id, &thread_id, &messages, &context_usage)?;
+            }
+
             let mut stream = tokio::select! {
                 biased;
                 () = self.cancel.cancelled() => return Ok(TurnState::Cancelled),
@@ -333,9 +373,16 @@ impl TurnRunner {
                     .collect(),
                 tool_call_id: None,
             });
+            match usage.as_ref() {
+                Some(provider_usage) => context_usage.clone_from(provider_usage),
+                None => {
+                    context_usage.prompt_tokens +=
+                        compaction::estimate_tokens(&messages[messages.len() - 1..]);
+                }
+            }
             // A snapshot after every LLM step, so a resumed session picks up mid-turn state
             // even if nothing runs after this (a plain answer, or the process stopping here).
-            self.snapshot_thread(session_id, &thread_id, &messages, usage.as_ref())?;
+            self.snapshot_thread(session_id, &thread_id, &messages, &context_usage)?;
 
             if completion.tool_calls.is_empty() {
                 return Ok(TurnState::Done);
@@ -361,12 +408,20 @@ impl TurnRunner {
                     harness_tools::call_by_name(&workspace, &call.name, &call.arguments)
                 }));
             }
-            let mut results = Vec::with_capacity(handles.len());
-            for handle in handles {
-                results.push(handle.await.context("tool call task panicked")?);
+            let mut batch = Vec::with_capacity(handles.len());
+            for (call, handle) in completion.tool_calls.iter().zip(handles) {
+                let result = handle.await.context("tool call task panicked")?;
+                batch.push((call.name.clone(), result));
             }
+            let batch = tokio::task::spawn_blocking(move || {
+                harness_tools::cap_large_outputs(&workspace, &mut batch);
+                batch
+            })
+            .await
+            .context("large tool output task panicked")?;
 
-            for (call, result) in completion.tool_calls.iter().zip(results) {
+            let first_result = messages.len();
+            for (call, (_, result)) in completion.tool_calls.iter().zip(batch) {
                 self.emit(EventKind::ToolResponse {
                     thread_id: thread_id.clone(),
                     tool_call_id: call.id.clone(),
@@ -381,8 +436,9 @@ impl TurnRunner {
                     tool_call_id: Some(call.id.clone()),
                 });
             }
+            context_usage.prompt_tokens += compaction::estimate_tokens(&messages[first_result..]);
             // And again after the tool step, so the round trip is durable too.
-            self.snapshot_thread(session_id, &thread_id, &messages, usage.as_ref())?;
+            self.snapshot_thread(session_id, &thread_id, &messages, &context_usage)?;
         }
     }
 
@@ -393,19 +449,45 @@ impl TurnRunner {
         session_id: &str,
         thread_id: &str,
         messages: &[Message],
-        usage: Option<&Usage>,
+        context_usage: &Usage,
     ) -> Result<()> {
         let history = &messages[1..];
         let context_json = self.inner.redactor.apply(&serde_json::to_string(history)?);
-        let context_usage_json = usage.and_then(|u| serde_json::to_string(u).ok());
+        let context_usage_json = serde_json::to_string(context_usage)?;
         self.inner.store.upsert_thread(&UpsertThread {
             id: thread_id,
             session_id,
             parent_id: None,
             context_json: &context_json,
-            context_usage_json: context_usage_json.as_deref(),
+            context_usage_json: Some(&context_usage_json),
         })?;
         Ok(())
+    }
+
+    /// A non-streaming call to the same model: the stream is drained without forwarding deltas.
+    /// `None` when the turn is cancelled first.
+    async fn complete(
+        &self,
+        client: &ChatClient,
+        messages: &[Message],
+    ) -> Result<Option<Completion>> {
+        let mut stream = tokio::select! {
+            biased;
+            () = self.cancel.cancelled() => return Ok(None),
+            result = client.stream(messages, &[]) => result?,
+        };
+        loop {
+            let chat_event = tokio::select! {
+                biased;
+                () = self.cancel.cancelled() => return Ok(None),
+                chat_event = stream.next() => chat_event?,
+            };
+            match chat_event {
+                Some(ChatEvent::Done(completion)) => return Ok(Some(completion)),
+                Some(ChatEvent::Delta(_)) => {}
+                None => bail!("provider stream ended without a final message"),
+            }
+        }
     }
 
     /// Persists a durable event (redacted), then forwards it.

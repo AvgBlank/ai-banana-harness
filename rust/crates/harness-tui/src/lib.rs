@@ -167,6 +167,7 @@ fn handle_terminal_event(
                     *session_id = id;
                     if let Some(main) = app.main_mut() {
                         main.resume_session(session);
+                        main.context_limit = Some(h.compaction_threshold(main.provider));
                     }
                 }
                 Ok(false)
@@ -187,6 +188,7 @@ fn handle_terminal_event(
                     };
                     h.switch_provider(session_id, next)?;
                     main.set_provider(next);
+                    main.context_limit = Some(h.compaction_threshold(next));
                 }
                 Ok(false)
             }
@@ -204,9 +206,12 @@ fn handle_terminal_event(
                             return Ok(false);
                         };
                         let (opened, sid) = open_harness(taken, provider, path.clone())?;
+                        app.enter_main(provider, path);
+                        if let Some(main) = app.main_mut() {
+                            main.context_limit = Some(opened.compaction_threshold(provider));
+                        }
                         *harness = Some(opened);
                         *session_id = sid;
-                        app.enter_main(provider, path);
                     }
                     Err(e) => {
                         if let Some(s) = app.startup_mut() {

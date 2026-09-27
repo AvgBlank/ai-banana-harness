@@ -222,10 +222,32 @@ fn draw_status(frame: &mut Frame, state: &MainState, area: Rect) {
     } else {
         theme::muted()
     };
+    let Some(limit) = state.context_limit else {
+        frame.render_widget(Paragraph::new(text).style(style), area);
+        return;
+    };
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(0), Constraint::Length(20)])
+        .split(area);
+    frame.render_widget(Paragraph::new(text).style(style), chunks[0]);
     frame.render_widget(
-        Paragraph::new(text).style(style).alignment(Alignment::Left),
-        area,
+        Paragraph::new(context_bar(state.context_tokens, limit))
+            .style(theme::muted())
+            .alignment(Alignment::Right),
+        chunks[1],
     );
+}
+
+/// `ctx ■■■□□□□□□□ 34%`, where 100% is the compaction threshold.
+fn context_bar(tokens: u64, limit: u64) -> String {
+    let percent = (tokens * 100).checked_div(limit).unwrap_or(0).min(100);
+    let filled = (percent / 10) as usize;
+    format!(
+        "ctx {}{} {percent}%",
+        "■".repeat(filled),
+        "□".repeat(10 - filled)
+    )
 }
 
 /// A collapsed one-line tool card: the call, and its outcome once known. A blocked call gets a

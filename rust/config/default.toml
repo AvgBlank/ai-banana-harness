@@ -1,6 +1,9 @@
 # Committed evaluation config, embedded in the binary.
 # The API key never lives in a config file: it is read only from AI_API_KEY.
 
+# A provider may also set `context_length` and `max_output` (tokens); compaction then fires at
+# the smaller of 80% of the context and the context minus max_output, instead of at 50,000.
+
 [providers.deepseek]
 base_url = "https://api.deepseek.com"
 model = "deepseek-flash"
