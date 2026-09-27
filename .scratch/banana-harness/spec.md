@@ -411,7 +411,7 @@ There is one week until the deadline, and the implementation is done by AI agent
 
 - **Deadline:** the brief's deadline is about 2026-10-04. The work is sized so the leaf packages build in parallel on day 2, the loop on day 3, the built-ins and TUI detail on day 4, headless and integration on day 5, cutover on day 6, and clean-environment verification on day 7.
 - **Background:** the planning map, its resolved decision tickets, and a detailed design reference with TrueForge source pointers, constants and prompt locations live alongside this spec under the `rust-tui-migration` planning folder.
-- **Research findings** live on three local research branches: provider API behaviour, Rust crate choices and the core-loop inventory.
+- **Research findings** live in `docs/research/`: provider API behaviour, Rust crate choices and the core-loop inventory.
 - **Glossary and decisions:** use the domain vocabulary in the glossary (TUI, headless run, agent, session, turn, thread, required action, provider, workspace, guardrail, checkpoint, evaluation issue). ADR 0001 explains why the fork drops the hosted product; ADR 0002 explains why paused turns wait in place.
 - **The providers' own limits:** DeepSeek offers no seed, so perfect reproducibility isn't possible there. The committed temperature, the model id and the recorded usage are the controls the brief asks for.
 - **Unverified API details:** the provider research was done without a live key. Implementers should confirm streaming-chunk shapes against a real key early, in the LLM client ticket, and update the recorded fixtures if they differ.

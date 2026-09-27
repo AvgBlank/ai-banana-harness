@@ -5,7 +5,7 @@ Map: [map.md](map.md) · Glossary: [CONTEXT.md](../../CONTEXT.md) · ADRs: [0001
 
 This spec is the destination of the wayfinder map. Every decision below links back to the ticket that made it. Implementers are AI agents: each work item in §11 names the check that proves it's done.
 
-**Research inputs.** Each research file lives on its own local branch; read it with `git show <branch>:<path>`.
+**Research inputs.** Each research file lives in `docs/research/` (first written on its own branch, named below).
 
 | Research | Branch | File |
 |---|---|---|
