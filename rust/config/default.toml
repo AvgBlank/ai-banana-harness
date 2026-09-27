@@ -3,12 +3,15 @@
 
 # A provider may also set `context_length` and `max_output` (tokens); compaction then fires at
 # the smaller of 80% of the context and the context minus max_output, instead of at 50,000.
+# `max_output` is also sent to the provider as the request's `max_tokens`: leaving it unset lets
+# the provider apply its own (often much smaller) default, which a long reply then breaches.
 
 [providers.deepseek]
 base_url = "https://api.deepseek.com"
 model = "deepseek-flash"
 temperature = 0.0
 context_length = 1048576
+max_output = 8192
 
 [providers.qwen]
 base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -16,6 +19,7 @@ model = "qwen3.8-flash"
 temperature = 0.0
 context_length = 1000000
 seed = 42
+max_output = 8192
 
 [agent]
 instructions = """

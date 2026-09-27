@@ -35,7 +35,8 @@ pub struct ProviderConfig {
     pub seed: Option<u64>,
     /// The model's context window in tokens. Unset, compaction falls back to a fixed threshold.
     pub context_length: Option<u64>,
-    /// Tokens reserved for the model's reply, which lowers the compaction threshold.
+    /// Tokens reserved for the model's reply: lowers the compaction threshold, and is also sent
+    /// to the provider as `max_tokens` so a long reply doesn't breach the provider's own default.
     pub max_output: Option<u64>,
 }
 

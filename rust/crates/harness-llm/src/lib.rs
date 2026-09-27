@@ -25,6 +25,10 @@ pub struct ClientConfig {
     pub temperature: f64,
     /// Sent only to Qwen; DeepSeek has no seed parameter.
     pub seed: Option<u64>,
+    /// The completion's own output budget, sent as the request's `max_tokens`. Unset lets the
+    /// provider apply its own (often small, e.g. 4096) default, which a long reply can then
+    /// breach.
+    pub max_tokens: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -139,6 +143,9 @@ impl ChatClient {
             "stream_options": { "include_usage": true },
             "temperature": c.temperature,
         });
+        if let Some(max_tokens) = c.max_tokens {
+            body["max_tokens"] = json!(max_tokens);
+        }
         if !tools.is_empty() {
             body["tools"] = json!(
                 tools

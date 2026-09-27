@@ -143,6 +143,7 @@ impl Harness {
             model: provider_config.model.clone(),
             temperature: provider_config.temperature,
             seed: provider_config.seed,
+            max_tokens: provider_config.max_output,
         })?;
         let store = Arc::new(options.store);
         let mcp = McpRegistry::new(
@@ -326,6 +327,7 @@ impl TurnRunner {
             model: provider_config.model.clone(),
             temperature: provider_config.temperature,
             seed: provider_config.seed,
+            max_tokens: provider_config.max_output,
         })?;
 
         // The session's root thread carries the conversation so far (never the system
