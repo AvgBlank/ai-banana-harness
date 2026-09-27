@@ -43,6 +43,10 @@ pub struct ProviderConfig {
 pub struct AgentConfig {
     pub instructions: String,
     pub subagents: bool,
+    /// A turn's LLM-call budget, shared across its root thread and every subagent.
+    pub max_llm_calls: u32,
+    /// A turn's wall-clock budget in minutes, from the turn's start.
+    pub max_turn_minutes: u32,
 }
 
 #[derive(Clone, Debug, Deserialize)]

@@ -6,12 +6,14 @@ use anyhow::{Context, Result, bail};
 use etcetera::BaseStrategy;
 
 mod builtins;
+mod checkpoint;
 mod compaction;
 mod config;
 mod event;
 mod harness;
 mod instructions;
 mod mcp;
+mod safety;
 mod skills;
 mod tools;
 
@@ -19,7 +21,7 @@ pub use config::{
     AgentConfig, Config, ConfigPaths, Provider, ProviderConfig, Providers, SkillsConfig,
 };
 pub use event::{Event, EventKind, ModelOutput, TurnState};
-pub use harness::{Answer, Harness, HarnessOptions, LAST_PROVIDER_SETTING, TurnHandle};
+pub use harness::{Answer, Harness, HarnessOptions, LAST_PROVIDER_SETTING, TurnHandle, UndoOutcome};
 pub use harness_llm::Usage;
 pub use harness_mcp::{McpServerConfig, McpTransport};
 pub use harness_store::{Session, Store};

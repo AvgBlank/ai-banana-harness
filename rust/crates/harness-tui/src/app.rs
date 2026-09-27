@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use harness_core::{
-    Config, Event, EventKind, McpServerStatus, Provider, Session, TurnState, Usage,
+    Config, Event, EventKind, McpServerStatus, Provider, Session, TurnState, UndoOutcome, Usage,
 };
 
 /// The sidebar hides itself below this terminal width, whatever its toggle says.
@@ -345,6 +345,18 @@ impl MainState {
     pub fn set_provider(&mut self, provider: Provider) {
         self.provider = provider;
         self.push_system_message(format!("Switched provider to {provider}"));
+    }
+
+    /// `/undo`: confirms whether the last turn's checkpoint was restored.
+    pub fn confirm_undo(&mut self, outcome: UndoOutcome) {
+        self.push_system_message(match outcome {
+            UndoOutcome::Restored => {
+                "Restored the workspace to the last turn's checkpoint.".to_string()
+            }
+            UndoOutcome::NothingToUndo => {
+                "Nothing to undo: the last turn made no checkpointed changes.".to_string()
+            }
+        });
     }
 
     fn push_system_message(&mut self, text: String) {
