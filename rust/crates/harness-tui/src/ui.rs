@@ -6,7 +6,7 @@ use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::text::{Line, Text};
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
-use crate::app::{App, MainState, Screen, StartupState, TranscriptItem};
+use crate::app::{App, MainState, Overlay, Screen, StartupState, TranscriptItem};
 use crate::theme;
 
 pub fn draw(frame: &mut Frame, app: &App) {
@@ -95,6 +95,55 @@ fn draw_main(frame: &mut Frame, state: &MainState) {
     draw_transcript(frame, state, chunks[0]);
     draw_input(frame, state, chunks[1]);
     draw_status(frame, state, chunks[2]);
+
+    if let Some(overlay) = &state.overlay {
+        draw_overlay(frame, overlay);
+    }
+}
+
+fn draw_overlay(frame: &mut Frame, overlay: &Overlay) {
+    match overlay {
+        Overlay::Sessions { sessions, selected } => draw_sessions(frame, sessions, *selected),
+    }
+}
+
+fn draw_sessions(frame: &mut Frame, sessions: &[harness_core::Session], selected: usize) {
+    let area = centered_rect(frame.area(), 70, 60);
+    frame.render_widget(Clear, area);
+    let block = Block::bordered()
+        .title(" Sessions ")
+        .border_style(theme::border_focused())
+        .style(theme::base());
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let mut lines: Vec<Line> = if sessions.is_empty() {
+        vec![Line::from("No earlier sessions.").style(theme::muted())]
+    } else {
+        sessions
+            .iter()
+            .enumerate()
+            .map(|(i, session)| {
+                let title = session.title.as_deref().unwrap_or("(untitled)");
+                let text = format!(
+                    "{title}  —  {}  —  {}",
+                    session.workspace, session.updated_at
+                );
+                if i == selected {
+                    Line::from(format!("> {text}")).style(theme::accent_bold())
+                } else {
+                    Line::from(format!("  {text}"))
+                }
+            })
+            .collect()
+    };
+    lines.push(Line::from(""));
+    lines.push(Line::from("↑/↓ choose · Enter resume · Esc cancel").style(theme::muted()));
+
+    frame.render_widget(
+        Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
+        inner,
+    );
 }
 
 fn draw_transcript<'a>(frame: &mut Frame, state: &'a MainState, area: Rect) {
@@ -115,6 +164,10 @@ fn draw_transcript<'a>(frame: &mut Frame, state: &'a MainState, area: Rect) {
                 if let Some(error) = &message.error {
                     lines.push(Line::from(format!("✗ {error}")).style(theme::error()));
                 }
+                lines.push(Line::from(""));
+            }
+            TranscriptItem::System(text) => {
+                lines.push(Line::from(format!("· {text}")).style(theme::muted()));
                 lines.push(Line::from(""));
             }
         }
@@ -155,7 +208,7 @@ fn draw_status(frame: &mut Frame, state: &MainState, area: Rect) {
     } else if state.quit_armed {
         "Press Ctrl+C again to quit".to_string()
     } else {
-        "Enter send · Alt+Enter newline · Ctrl+C cancel/quit · /quit exit".to_string()
+        "Enter send · Ctrl+C cancel/quit · /new /sessions /provider /quit".to_string()
     };
     let style = if state.turn_running {
         theme::accent()

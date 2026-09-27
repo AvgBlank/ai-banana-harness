@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use harness_core::{Event, EventKind, Provider, TurnState};
+use harness_core::{Event, EventKind, Provider, Session, TurnState};
 
 /// Animation frames for the running-turn spinner.
 pub const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -38,11 +38,23 @@ pub struct MainState {
     /// Armed by one Ctrl+C while idle; a second one quits. Any other key disarms it.
     pub quit_armed: bool,
     pub last_error: Option<String>,
+    /// A modal in front of the transcript, e.g. the `/sessions` picker.
+    pub overlay: Option<Overlay>,
+}
+
+/// A picker shown over the main screen, closed by resuming a choice or by Esc.
+pub enum Overlay {
+    Sessions {
+        sessions: Vec<Session>,
+        selected: usize,
+    },
 }
 
 pub enum TranscriptItem {
     User(String),
     Assistant(AssistantMessage),
+    /// A status note for a slash command, e.g. a new or resumed session.
+    System(String),
 }
 
 pub struct AssistantMessage {
@@ -128,7 +140,51 @@ impl MainState {
             spinner_frame: 0,
             quit_armed: false,
             last_error: None,
+            overlay: None,
         }
+    }
+
+    /// `/new`: clears the transcript for a freshly created session.
+    pub fn start_new_session(&mut self) {
+        self.transcript.clear();
+        self.input.clear();
+        self.turn_running = false;
+        self.last_error = None;
+        self.push_system_message("Started a new session.".to_string());
+    }
+
+    /// `/sessions`: opens the picker.
+    pub fn open_sessions(&mut self, sessions: Vec<Session>) {
+        self.overlay = Some(Overlay::Sessions {
+            sessions,
+            selected: 0,
+        });
+    }
+
+    pub fn close_overlay(&mut self) {
+        self.overlay = None;
+    }
+
+    /// Resuming a session shows a fresh transcript; the resumed conversation lives in the
+    /// session's thread context, which the next turn picks up automatically.
+    pub fn resume_session(&mut self, session: Session) {
+        self.overlay = None;
+        self.provider = session.provider.parse().unwrap_or(self.provider);
+        let label = session.title.as_deref().unwrap_or(&session.id).to_string();
+        self.transcript.clear();
+        self.input.clear();
+        self.turn_running = false;
+        self.last_error = None;
+        self.push_system_message(format!("Resumed session: {label}"));
+    }
+
+    pub fn set_provider(&mut self, provider: Provider) {
+        self.provider = provider;
+        self.push_system_message(format!("Switched provider to {provider}"));
+    }
+
+    fn push_system_message(&mut self, text: String) {
+        self.transcript.push(TranscriptItem::System(text));
     }
 
     pub fn tick_spinner(&mut self) {

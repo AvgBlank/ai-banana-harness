@@ -1,9 +1,10 @@
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::{Arc, LazyLock, Mutex};
 
-use anyhow::{Result, bail};
+use anyhow::{Result, anyhow, bail};
 use harness_llm::{ChatClient, ChatEvent, ClientConfig, Dialect, Message, Role, Usage};
-use harness_store::{FinishTurn, NewEvent, NewSession, NewTurn, Store};
+use harness_store::{FinishTurn, NewEvent, NewSession, NewTurn, Session, Store, UpsertThread};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use ulid::{Generator, Ulid};
@@ -12,6 +13,13 @@ use crate::config::{Config, Provider};
 use crate::event::{Event, EventKind, ModelOutput, TurnState};
 use crate::instructions::{SystemPromptInput, system_prompt};
 use crate::skills::load_skills;
+
+/// The setting key that stores the provider last chosen, read back to preselect the startup
+/// popup and updated whenever `/provider` switches a session.
+pub const LAST_PROVIDER_SETTING: &str = "last_provider";
+
+/// A session's title is the first turn's input, truncated; longer inputs are cut here.
+const MAX_SESSION_TITLE_LEN: usize = 50;
 
 pub struct HarnessOptions {
     pub config: Config,
@@ -29,9 +37,11 @@ pub struct Harness {
 
 struct Inner {
     store: Store,
-    client: ChatClient,
     config: Config,
+    /// The provider a brand-new session starts with; each turn afterwards reads the session's
+    /// own `provider` column, which `/provider` can change independently.
     provider: Provider,
+    api_key: String,
     workspace: PathBuf,
     redactor: Redactor,
 }
@@ -50,12 +60,11 @@ impl TurnHandle {
 
 impl Harness {
     pub fn open(options: HarnessOptions) -> Result<Self> {
+        // Built once, purely to fail fast on a broken config and install the rustls crypto
+        // provider early; each turn builds its own client for the session's current provider.
         let provider_config = options.config.provider(options.provider);
-        let client = ChatClient::new(ClientConfig {
-            dialect: match options.provider {
-                Provider::DeepSeek => Dialect::DeepSeek,
-                Provider::Qwen => Dialect::Qwen,
-            },
+        let _ = ChatClient::new(ClientConfig {
+            dialect: client_dialect(options.provider),
             base_url: provider_config.base_url.clone(),
             api_key: options.api_key.clone(),
             model: provider_config.model.clone(),
@@ -65,9 +74,9 @@ impl Harness {
         Ok(Self {
             inner: Arc::new(Inner {
                 store: options.store,
-                client,
                 config: options.config,
                 provider: options.provider,
+                api_key: options.api_key.clone(),
                 workspace: options.workspace,
                 redactor: Redactor::new(&options.api_key),
             }),
@@ -85,6 +94,31 @@ impl Harness {
             model: &inner.config.provider(inner.provider).model,
         })?;
         Ok(id)
+    }
+
+    /// All sessions across every workspace this database has seen, most recently updated first,
+    /// for `/sessions` to list.
+    pub fn sessions(&self) -> Result<Vec<Session>> {
+        self.inner.store.sessions()
+    }
+
+    /// A single session by id, e.g. to read back its provider when resuming it.
+    pub fn session(&self, session_id: &str) -> Result<Option<Session>> {
+        self.inner.store.session(session_id)
+    }
+
+    /// Switches a session's provider (`/provider`) and remembers the choice as the next
+    /// startup's preselection.
+    pub fn switch_provider(&self, session_id: &str, provider: Provider) -> Result<()> {
+        let inner = &self.inner;
+        let model = &inner.config.provider(provider).model;
+        inner
+            .store
+            .set_session_provider(session_id, provider.as_str(), model)?;
+        inner
+            .store
+            .set_setting(LAST_PROVIDER_SETTING, provider.as_str())?;
+        Ok(())
     }
 
     /// Starts a turn in the background. The stream always ends with `turn.done`.
@@ -153,13 +187,42 @@ impl TurnRunner {
             session_id,
             input: &inner.redactor.apply(input),
         })?;
+        inner
+            .store
+            .set_session_title_if_unset(session_id, &inner.redactor.apply(&session_title(input)))?;
         self.emit(EventKind::TurnCreated {
             session_id: session_id.to_string(),
             turn_id: self.turn_id.clone(),
         })
         .await?;
 
-        let thread_id = new_id();
+        let session = inner
+            .store
+            .session(session_id)?
+            .ok_or_else(|| anyhow!("session {session_id} not found"))?;
+        let provider = Provider::from_str(&session.provider)?;
+        let provider_config = inner.config.provider(provider);
+        let client = ChatClient::new(ClientConfig {
+            dialect: client_dialect(provider),
+            base_url: provider_config.base_url.clone(),
+            api_key: inner.api_key.clone(),
+            model: provider_config.model.clone(),
+            temperature: provider_config.temperature,
+            seed: provider_config.seed,
+        })?;
+
+        // The session's root thread carries the conversation so far (never the system
+        // message, which is rebuilt fresh below); a session with no thread yet is starting.
+        let existing_thread = inner.store.root_thread(session_id)?;
+        let thread_id = existing_thread
+            .as_ref()
+            .map(|t| t.id.clone())
+            .unwrap_or_else(new_id);
+        let mut history: Vec<Message> = existing_thread
+            .as_ref()
+            .and_then(|t| serde_json::from_str(&t.context_json).ok())
+            .unwrap_or_default();
+
         let agents_md = std::fs::read_to_string(inner.workspace.join("AGENTS.md")).ok();
         let loaded_skills = load_skills(&inner.config.skills.paths, &inner.workspace);
         for warning in &loaded_skills.warnings {
@@ -173,20 +236,22 @@ impl TurnRunner {
             subagents_enabled: inner.config.agent.subagents,
             root: true,
         });
-        let messages = [
-            Message {
-                role: Role::System,
-                content: prompt,
-            },
-            Message {
-                role: Role::User,
-                content: input.to_string(),
-            },
-        ];
+        let user_message = Message {
+            role: Role::User,
+            content: input.to_string(),
+        };
+        let mut messages = Vec::with_capacity(history.len() + 2);
+        messages.push(Message {
+            role: Role::System,
+            content: prompt,
+        });
+        messages.extend(history.iter().cloned());
+        messages.push(user_message.clone());
+
         let mut stream = tokio::select! {
             biased;
             () = self.cancel.cancelled() => return Ok(TurnState::Cancelled),
-            result = inner.client.stream(&messages) => result?,
+            result = client.stream(&messages) => result?,
         };
         let message_id = new_id();
         self.forward(EventKind::ModelMessage {
@@ -216,6 +281,25 @@ impl TurnRunner {
                 ChatEvent::Done(completion) => {
                     usage.clone_from(&completion.usage);
                     let finish_reason = completion.finish_reason.clone();
+
+                    history.push(user_message.clone());
+                    history.push(Message {
+                        role: Role::Assistant,
+                        content: completion.content.clone(),
+                    });
+                    let context_json = inner.redactor.apply(&serde_json::to_string(&history)?);
+                    let context_usage_json = completion
+                        .usage
+                        .as_ref()
+                        .and_then(|u| serde_json::to_string(u).ok());
+                    inner.store.upsert_thread(&UpsertThread {
+                        id: &thread_id,
+                        session_id,
+                        parent_id: None,
+                        context_json: &context_json,
+                        context_usage_json: context_usage_json.as_deref(),
+                    })?;
+
                     self.emit(EventKind::ModelMessage {
                         thread_id: thread_id.clone(),
                         message_id: message_id.clone(),
@@ -279,6 +363,23 @@ impl Redactor {
             return text.to_string();
         }
         text.replace(&self.needle, "[REDACTED]")
+    }
+}
+
+fn client_dialect(provider: Provider) -> Dialect {
+    match provider {
+        Provider::DeepSeek => Dialect::DeepSeek,
+        Provider::Qwen => Dialect::Qwen,
+    }
+}
+
+/// The first turn's input, trimmed and truncated, becomes the session's title. Later turns
+/// don't call this: `set_session_title_if_unset` only writes it once.
+fn session_title(input: &str) -> String {
+    let first_line = input.lines().next().unwrap_or("").trim();
+    match first_line.char_indices().nth(MAX_SESSION_TITLE_LEN) {
+        Some((cut, _)) => first_line[..cut].to_string(),
+        None => first_line.to_string(),
     }
 }
 

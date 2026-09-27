@@ -268,6 +268,23 @@ impl TestHarness {
     pub fn reopen_store(&self) -> Store {
         Store::open(&self.db_path).unwrap()
     }
+
+    /// A second harness against the same database and workspace, as a later process would open
+    /// it, still pointed at this test's fake provider.
+    pub async fn reopen(&self, provider: Provider) -> Harness {
+        let mut config = Config::embedded_default().unwrap();
+        config.skills.paths.clear();
+        config.providers.deepseek.base_url = self.provider.base_url.clone();
+        config.providers.qwen.base_url = self.provider.base_url.clone();
+        Harness::open(HarnessOptions {
+            config,
+            store: Store::open(&self.db_path).unwrap(),
+            provider,
+            api_key: TEST_API_KEY.to_string(),
+            workspace: self.workspace.clone(),
+        })
+        .unwrap()
+    }
 }
 
 /// Drains a turn's stream, failing the test if it doesn't end with `turn.done` within 10 s.
