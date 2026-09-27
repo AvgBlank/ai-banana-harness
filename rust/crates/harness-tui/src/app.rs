@@ -43,6 +43,7 @@ pub struct MainState {
 pub enum TranscriptItem {
     User(String),
     Assistant(AssistantMessage),
+    Tool(ToolCallItem),
 }
 
 pub struct AssistantMessage {
@@ -50,6 +51,19 @@ pub struct AssistantMessage {
     message_id: String,
     pub content: String,
     pub error: Option<String>,
+}
+
+/// One tool call's card: the request, and its outcome once the result arrives.
+pub struct ToolCallItem {
+    tool_call_id: String,
+    pub name: String,
+    pub arguments: String,
+    pub outcome: Option<ToolOutcome>,
+}
+
+pub struct ToolOutcome {
+    pub content: String,
+    pub blocked: bool,
 }
 
 impl App {
@@ -187,6 +201,29 @@ impl MainState {
                     self.last_error = error;
                 }
             }
+            EventKind::ToolCall {
+                tool_call_id,
+                name,
+                arguments,
+                ..
+            } => {
+                self.transcript.push(TranscriptItem::Tool(ToolCallItem {
+                    tool_call_id,
+                    name,
+                    arguments,
+                    outcome: None,
+                }));
+            }
+            EventKind::ToolResponse {
+                tool_call_id,
+                content,
+                blocked,
+                ..
+            } => {
+                if let Some(call) = self.tool_call_mut(&tool_call_id) {
+                    call.outcome = Some(ToolOutcome { content, blocked });
+                }
+            }
         }
     }
 
@@ -204,6 +241,16 @@ impl MainState {
                 {
                     Some(message)
                 }
+                _ => None,
+            })
+    }
+
+    fn tool_call_mut(&mut self, tool_call_id: &str) -> Option<&mut ToolCallItem> {
+        self.transcript
+            .iter_mut()
+            .rev()
+            .find_map(|item| match item {
+                TranscriptItem::Tool(call) if call.tool_call_id == tool_call_id => Some(call),
                 _ => None,
             })
     }

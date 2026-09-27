@@ -43,6 +43,7 @@ etcetera = "0.11.0"
 
 # Search
 ignore = "0.4.33"
+globset = "0.4.20"
 grep-searcher = "0.1.17"
 grep-regex = "0.1.14"
 grep-matcher = "0.1.9"

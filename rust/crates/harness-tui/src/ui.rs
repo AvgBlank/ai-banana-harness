@@ -3,10 +3,10 @@
 use harness_core::{APP_NAME, Provider};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
-use ratatui::text::{Line, Text};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
-use crate::app::{App, MainState, Screen, StartupState, TranscriptItem};
+use crate::app::{App, MainState, Screen, StartupState, ToolCallItem, TranscriptItem};
 use crate::theme;
 
 pub fn draw(frame: &mut Frame, app: &App) {
@@ -117,6 +117,9 @@ fn draw_transcript<'a>(frame: &mut Frame, state: &'a MainState, area: Rect) {
                 }
                 lines.push(Line::from(""));
             }
+            TranscriptItem::Tool(call) => {
+                lines.push(tool_card_line(call));
+            }
         }
     }
     if let Some(error) = &state.last_error {
@@ -166,6 +169,48 @@ fn draw_status(frame: &mut Frame, state: &MainState, area: Rect) {
         Paragraph::new(text).style(style).alignment(Alignment::Left),
         area,
     );
+}
+
+/// A collapsed one-line tool card: the call, and its outcome once known. A blocked call gets a
+/// red badge instead of an outcome preview.
+fn tool_card_line(call: &ToolCallItem) -> Line<'static> {
+    let arguments = one_line(&compact_json(&call.arguments), 40);
+    let mut spans = vec![
+        Span::raw("🔧 "),
+        Span::styled(call.name.clone(), theme::accent()),
+        Span::raw(format!("({arguments}) ")),
+    ];
+    match &call.outcome {
+        None => spans.push(Span::styled("…", theme::muted())),
+        Some(outcome) if outcome.blocked => {
+            spans.push(Span::styled("blocked", theme::error()));
+        }
+        Some(outcome) => {
+            spans.push(Span::raw("→ "));
+            spans.push(Span::raw(one_line(&outcome.content, 60)));
+        }
+    }
+    Line::from(spans)
+}
+
+/// Re-serialises `json` on one line when it parses, otherwise returns it unchanged; either way
+/// the result still goes through [`one_line`] to collapse whitespace and truncate.
+fn compact_json(json: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(json)
+        .map(|value| value.to_string())
+        .unwrap_or_else(|_| json.to_string())
+}
+
+/// Collapses newlines to spaces and truncates to `max` characters (adding an ellipsis), so a
+/// multi-line tool result still renders as one transcript line.
+fn one_line(text: &str, max: usize) -> String {
+    let flat: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= max {
+        flat
+    } else {
+        let truncated: String = flat.chars().take(max).collect();
+        format!("{truncated}…")
+    }
 }
 
 /// A `width%` x `height%` box centred in `area`.

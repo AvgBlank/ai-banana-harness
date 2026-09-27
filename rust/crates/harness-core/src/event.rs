@@ -35,6 +35,24 @@ pub enum EventKind {
         message_id: String,
         content: String,
     },
+    /// A tool call the model requested, before it runs.
+    #[serde(rename = "tool.call")]
+    ToolCall {
+        thread_id: String,
+        tool_call_id: String,
+        name: String,
+        /// Raw JSON text, exactly as the model sent it.
+        arguments: String,
+    },
+    /// A tool call's outcome. `blocked` is set when a guardrail rejected the call; `content` is
+    /// then `"Blocked by guardrail: <rule>"`.
+    #[serde(rename = "tool.response")]
+    ToolResponse {
+        thread_id: String,
+        tool_call_id: String,
+        content: String,
+        blocked: bool,
+    },
 }
 
 impl EventKind {
@@ -45,6 +63,8 @@ impl EventKind {
             EventKind::TurnDone { .. } => "turn.done",
             EventKind::ModelMessage { .. } => "model.message",
             EventKind::ModelMessageDelta { .. } => "model.message.delta",
+            EventKind::ToolCall { .. } => "tool.call",
+            EventKind::ToolResponse { .. } => "tool.response",
         }
     }
 
@@ -52,7 +72,9 @@ impl EventKind {
     pub fn thread_id(&self) -> Option<&str> {
         match self {
             EventKind::ModelMessage { thread_id, .. }
-            | EventKind::ModelMessageDelta { thread_id, .. } => Some(thread_id),
+            | EventKind::ModelMessageDelta { thread_id, .. }
+            | EventKind::ToolCall { thread_id, .. }
+            | EventKind::ToolResponse { thread_id, .. } => Some(thread_id),
             EventKind::TurnCreated { .. } | EventKind::TurnDone { .. } => None,
         }
     }
