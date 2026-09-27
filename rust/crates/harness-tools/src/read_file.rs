@@ -1,9 +1,7 @@
-use std::path::Path;
-
 use serde_json::Value;
 
-use crate::ToolResult;
-use crate::guardrail;
+use crate::guardrail::Key;
+use crate::{ToolContext, ToolResult};
 
 pub const DESCRIPTION: &str = "Read a file from the workspace. Returns its lines, numbered from 1, starting at `offset` \
 (default 0) and up to `limit` lines (default 2000).";
@@ -20,17 +18,14 @@ pub fn parameters() -> Value {
     })
 }
 
-pub fn call(workspace: &Path, arguments: &Value) -> ToolResult {
+pub fn call(ctx: &ToolContext<'_>, arguments: &Value) -> ToolResult {
     let Some(path) = arguments.get("path").and_then(Value::as_str) else {
         return ToolResult::error("read_file requires a string \"path\" argument");
     };
-    let resolved = match guardrail::confine(workspace, Path::new(path)) {
+    let resolved = match ctx.path(Key::Read, path) {
         Ok(resolved) => resolved,
-        Err(rule) => return ToolResult::blocked(&rule),
+        Err(blocked) => return blocked,
     };
-    if let Some(rule) = guardrail::denied_read_rule(&resolved) {
-        return ToolResult::blocked(rule);
-    }
     let content = match std::fs::read_to_string(&resolved) {
         Ok(content) => content,
         Err(e) => return ToolResult::error(format!("reading {}: {e}", resolved.display())),

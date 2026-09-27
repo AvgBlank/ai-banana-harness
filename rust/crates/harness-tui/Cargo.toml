@@ -14,6 +14,8 @@ tui-markdown.workspace = true
 tokio.workspace = true
 futures-util.workspace = true
 serde_json.workspace = true
+similar.workspace = true
+syntect.workspace = true
 
 [lints]
 workspace = true

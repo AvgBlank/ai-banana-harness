@@ -351,14 +351,19 @@ impl TurnRunner {
                 .await?;
             }
 
-            // Each host tool call is blocking filesystem work; spawn_blocking runs them on
-            // separate OS threads so they genuinely execute in parallel.
-            let workspace = inner.workspace.clone();
+            // Each host tool call is blocking filesystem or process work; spawn_blocking runs
+            // them on separate OS threads so they genuinely execute in parallel.
             let mut handles = Vec::with_capacity(completion.tool_calls.len());
             for call in completion.tool_calls.clone() {
-                let workspace = workspace.clone();
+                let inner = Arc::clone(&self.inner);
                 handles.push(tokio::task::spawn_blocking(move || {
-                    harness_tools::call_by_name(&workspace, &call.name, &call.arguments)
+                    let ctx = harness_tools::ToolContext {
+                        workspace: &inner.workspace,
+                        tools: &inner.config.tools,
+                        permission: &inner.config.permission,
+                        hidden_env: &[crate::API_KEY_ENV],
+                    };
+                    harness_tools::call_by_name(&ctx, &call.name, &call.arguments)
                 }));
             }
             let mut results = Vec::with_capacity(handles.len());
@@ -367,16 +372,18 @@ impl TurnRunner {
             }
 
             for (call, result) in completion.tool_calls.iter().zip(results) {
+                // Redacted here, not just on persist, so the model never sees the key either.
+                let content = inner.redactor.apply(&result.content);
                 self.emit(EventKind::ToolResponse {
                     thread_id: thread_id.clone(),
                     tool_call_id: call.id.clone(),
-                    content: result.content.clone(),
+                    content: content.clone(),
                     blocked: result.blocked,
                 })
                 .await?;
                 messages.push(Message {
                     role: Role::Tool,
-                    content: result.content,
+                    content,
                     tool_calls: Vec::new(),
                     tool_call_id: Some(call.id.clone()),
                 });
@@ -433,7 +440,7 @@ impl TurnRunner {
     }
 }
 
-/// Replaces the API key with `[REDACTED]` in anything the harness persists.
+/// Replaces the API key with `[REDACTED]` in anything the harness persists, and in tool results.
 struct Redactor {
     /// The key as it appears inside a JSON string, which covers plain text too.
     needle: String,

@@ -22,3 +22,39 @@ subagents = false
 
 [skills]
 paths = [".banana-harness/skills", "~/.config/banana-harness/skills"]
+
+[tools]
+bash_timeout_secs = 120 # at most 600
+output_max_bytes = 30720
+
+# Each key is "allow", "ask" or "deny", or a table of pattern = action where `*` matches
+# anything and the LAST matching pattern wins (patterns stay in the order written). Overlays
+# that repeat a pattern change it in place; new patterns are appended, so they win.
+# "ask" currently behaves as "deny". Read/edit patterns match workspace-relative paths.
+[permission]
+edit = "allow"
+glob = "allow"
+grep = "allow"
+external_directory = "deny"
+
+[permission.read]
+"*" = "allow"
+".env*" = "deny"
+"*/.env*" = "deny"
+
+[permission.bash]
+"*" = "allow"
+"sudo *" = "deny"
+"su *" = "deny"
+"rm -rf /*" = "deny"
+"rm -rf ~*" = "deny"
+"git push*" = "deny"
+"curl * | sh*" = "deny"
+"curl * | bash*" = "deny"
+"wget * | sh*" = "deny"
+"wget * | bash*" = "deny"
+"mkfs*" = "deny"
+"dd *" = "deny"
+"shutdown*" = "deny"
+"reboot*" = "deny"
+"chmod -R 777 /*" = "deny"

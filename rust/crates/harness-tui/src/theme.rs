@@ -11,6 +11,10 @@ pub const MUTED: Color = Color::Rgb(0x8a, 0x8a, 0x92);
 pub const BORDER: Color = Color::Rgb(0x3a, 0x3a, 0x40);
 pub const ACCENT: Color = Color::Rgb(0xff, 0xe1, 0x35);
 pub const ERROR: Color = Color::Rgb(0xe0, 0x5a, 0x5a);
+pub const SUCCESS: Color = Color::Rgb(0x7c, 0xc4, 0x6a);
+/// Row tints behind added and removed diff lines, dark enough to keep syntax colours legible.
+pub const DIFF_ADDED_BG: Color = Color::Rgb(0x1c, 0x33, 0x1c);
+pub const DIFF_REMOVED_BG: Color = Color::Rgb(0x3a, 0x1c, 0x1e);
 
 pub fn base() -> Style {
     Style::new().fg(TEXT).bg(BACKGROUND)
@@ -38,4 +42,8 @@ pub fn muted() -> Style {
 
 pub fn error() -> Style {
     Style::new().fg(ERROR).add_modifier(Modifier::BOLD)
+}
+
+pub fn success() -> Style {
+    Style::new().fg(SUCCESS)
 }

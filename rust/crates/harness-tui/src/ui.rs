@@ -1,10 +1,19 @@
 //! Renders an [`App`] into a [`Frame`]. Pure: it never mutates `app`.
 
+use std::path::Path;
+use std::sync::LazyLock;
+
 use harness_core::{APP_NAME, Provider};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
+use serde_json::Value;
+use similar::{ChangeTag, TextDiff};
+use syntect::easy::HighlightLines;
+use syntect::highlighting::{Theme, ThemeSet};
+use syntect::parsing::SyntaxSet;
 
 use crate::app::{App, MainState, Overlay, Screen, StartupState, ToolCallItem, TranscriptItem};
 use crate::theme;
@@ -172,6 +181,9 @@ fn draw_transcript<'a>(frame: &mut Frame, state: &'a MainState, area: Rect) {
             }
             TranscriptItem::Tool(call) => {
                 lines.push(tool_card_line(call));
+                if call.expanded {
+                    lines.extend(expanded_card_lines(call));
+                }
             }
             TranscriptItem::System(text) => {
                 lines.push(Line::from(format!("· {text}")).style(theme::muted()));
@@ -215,7 +227,8 @@ fn draw_status(frame: &mut Frame, state: &MainState, area: Rect) {
     } else if state.quit_armed {
         "Press Ctrl+C again to quit".to_string()
     } else {
-        "Enter send · Ctrl+C cancel/quit · /new /sessions /provider /quit".to_string()
+        "Enter send · Ctrl+O expand · Ctrl+C cancel/quit · /new /sessions /provider /quit"
+            .to_string()
     };
     let style = if state.turn_running {
         theme::accent()
@@ -248,6 +261,99 @@ fn tool_card_line(call: &ToolCallItem) -> Line<'static> {
         }
     }
     Line::from(spans)
+}
+
+/// Lines of bash output an expanded card shows.
+const BASH_TAIL_LINES: usize = 40;
+
+static SYNTAXES: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_newlines);
+static SYNTAX_THEME: LazyLock<Option<Theme>> =
+    LazyLock::new(|| ThemeSet::load_defaults().themes.remove("base16-ocean.dark"));
+
+/// The body under an expanded card: a diff for edit/write, the output's tail for bash.
+fn expanded_card_lines(call: &ToolCallItem) -> Vec<Line<'static>> {
+    let arguments: Value = serde_json::from_str(&call.arguments).unwrap_or(Value::Null);
+    let text = |key| arguments.get(key).and_then(Value::as_str).unwrap_or("");
+    match call.name.as_str() {
+        "edit" => diff_lines(text("path"), text("old_string"), text("new_string")),
+        // The prior content isn't known here, so a write shows as all additions.
+        "write_file" => diff_lines(text("path"), "", text("content")),
+        "bash" => bash_lines(text("command"), call),
+        _ => Vec::new(),
+    }
+}
+
+/// A line diff, each line syntax-highlighted for `path`'s language on a red/green row tint.
+// ponytail: re-highlighted on every redraw; cache per card if big diffs make frames slow.
+fn diff_lines(path: &str, old: &str, new: &str) -> Vec<Line<'static>> {
+    let syntax = Path::new(path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .and_then(|ext| SYNTAXES.find_syntax_by_extension(ext))
+        .unwrap_or_else(|| SYNTAXES.find_syntax_plain_text());
+    let mut highlighter = SYNTAX_THEME
+        .as_ref()
+        .map(|theme| HighlightLines::new(syntax, theme));
+    TextDiff::from_lines(old, new)
+        .iter_all_changes()
+        .map(|change| {
+            let (sign, row) = match change.tag() {
+                ChangeTag::Delete => ("- ", Style::new().bg(theme::DIFF_REMOVED_BG)),
+                ChangeTag::Insert => ("+ ", Style::new().bg(theme::DIFF_ADDED_BG)),
+                ChangeTag::Equal => ("  ", Style::new()),
+            };
+            let sign_style = match change.tag() {
+                ChangeTag::Delete => theme::error(),
+                ChangeTag::Insert => theme::success(),
+                ChangeTag::Equal => theme::muted(),
+            };
+            let value = change.value();
+            let mut spans = vec![Span::raw("    "), Span::styled(sign, sign_style.patch(row))];
+            let highlighted = highlighter
+                .as_mut()
+                .and_then(|h| h.highlight_line(value, &SYNTAXES).ok());
+            match highlighted {
+                Some(ranges) => spans.extend(ranges.into_iter().map(|(style, piece)| {
+                    let fg = style.foreground;
+                    Span::styled(
+                        piece.trim_end_matches('\n').to_string(),
+                        row.fg(Color::Rgb(fg.r, fg.g, fg.b)),
+                    )
+                })),
+                None => spans.push(Span::styled(value.trim_end_matches('\n').to_string(), row)),
+            }
+            Line::from(spans)
+        })
+        .collect()
+}
+
+/// The command, the last lines of its output, and its exit status (the result's first line).
+fn bash_lines(command: &str, call: &ToolCallItem) -> Vec<Line<'static>> {
+    let mut lines = vec![Line::from(format!("    $ {command}")).style(theme::muted())];
+    let Some(outcome) = &call.outcome else {
+        return lines;
+    };
+    let (status, output) = outcome
+        .content
+        .split_once('\n')
+        .unwrap_or((outcome.content.as_str(), ""));
+    let output: Vec<&str> = output.lines().collect();
+    let skip = output.len().saturating_sub(BASH_TAIL_LINES);
+    if skip > 0 {
+        lines.push(Line::from(format!("    … {skip} earlier lines")).style(theme::muted()));
+    }
+    lines.extend(
+        output[skip..]
+            .iter()
+            .map(|l| Line::from(format!("    {l}"))),
+    );
+    let status_style = if status == "exit code: 0" {
+        theme::success()
+    } else {
+        theme::error()
+    };
+    lines.push(Line::from(format!("    {status}")).style(status_style));
+    lines
 }
 
 /// Re-serialises `json` on one line when it parses, otherwise returns it unchanged; either way
