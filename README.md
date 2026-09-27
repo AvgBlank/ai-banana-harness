@@ -1,116 +1,100 @@
-<p align="center">
-  <a href="https://trueforge.dev">
-    <picture>
-      <source srcset="./docs/assets/trueforge-black.svg" media="(prefers-color-scheme: light)">
-      <source srcset="./docs/assets/trueforge-white.svg" media="(prefers-color-scheme: dark)">
-      <img src="./docs/assets/trueforge-black.svg" alt="TrueForge logo">
-    </picture>
-  </a>
-</p>
-<p align="center">The open-source agent harness - the runtime layer that turns an LLM into a working agent</p>
+# Banana Harness
 
-<p align="center">
-  <a href="https://trendshift.io/repositories/155463?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-155463" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/155463/daily?language=TypeScript" alt="truefoundry%2Ftrueforge | Trendshift" width="250" height="55"/></a>
-</p>
+A local-first, terminal-first coding-agent harness: one binary, a ratatui **TUI** and a
+**headless run**, driving DeepSeek or Qwen to resolve a GitHub issue in a local repository.
 
-<p align="center">
-  <a href="https://github.com/truefoundry/trueforge/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square" alt="License: MIT"></a>
-  <a href="https://nodejs.org"><img src="https://img.shields.io/badge/Node.js-%3E%3D22.14-green.svg?style=flat-square" alt="Node.js >= 22.14"></a>
-  <a href="https://trueforge.dev"><img src="https://img.shields.io/badge/Documentation-trueforge.dev-blue.svg?style=flat-square" alt="Documentation"></a>
-  <a href="https://trueforge.dev/quickstart"><img src="https://img.shields.io/badge/Quickstart-trueforge.dev/quickstart-blue.svg?style=flat-square" alt="Quickstart"></a>
-  <a href="https://trueforge.dev/api/overview"><img src="https://img.shields.io/badge/SDK-trueforge.dev/api/overview-blue.svg?style=flat-square" alt="SDK"></a>
-</p>
-<p align="center">
-  <a href="https://www.npmjs.com/package/@truefoundry/trueforge"><img src="https://img.shields.io/npm/v/@truefoundry/trueforge?label=trueforge&logo=npm&style=flat-square" alt="npm @truefoundry/trueforge"></a>
-  <a href="https://www.npmjs.com/package/@truefoundry/trueforge-sdk"><img src="https://img.shields.io/npm/v/@truefoundry/trueforge-sdk?label=trueforge-sdk&logo=npm&style=flat-square" alt="npm @truefoundry/trueforge-sdk"></a>
-  <a href="https://www.npmjs.com/package/@truefoundry/trueforge-ui"><img src="https://img.shields.io/npm/v/@truefoundry/trueforge-ui?label=trueforge-ui&logo=npm&style=flat-square" alt="npm @truefoundry/trueforge-ui"></a>
-  <a href="https://www.npmjs.com/package/@truefoundry/trueforge-core"><img src="https://img.shields.io/npm/v/@truefoundry/trueforge-core?label=trueforge-core&logo=npm&style=flat-square" alt="npm @truefoundry/trueforge-core"></a>
-  <a href="https://tfy.jfrog.io/ui/packages/oci:%2F%2Ftrueforge"><img src="https://img.shields.io/badge/dynamic/yaml?url=https%3A%2F%2Fraw.githubusercontent.com%2Ftruefoundry%2Ftrueforge%2Frefs%2Fheads%2Fmain%2Fcharts%2Ftrueforge%2FChart.yaml&query=%24.version&label=trueforge&logo=helm&style=flat-square" alt="helm trueforge"></a>
-  <a href="https://deepwiki.com/truefoundry/trueforge"><img src="https://deepwiki.com/badge.svg?style=flat-square" alt="Ask DeepWiki"></a>
-</p>
+The code lives in `rust/` (a Cargo workspace). The design is in `.scratch/banana-harness/spec.md`,
+the vocabulary in `CONTEXT.md`, and the key decisions in `docs/adr/`.
 
-# TrueForge
-
-TrueForge runs the agent execution loop for you - model calls, MCP tools, skills, sandboxing, approvals, context management, and session state - and exposes it three ways: a **chat UI**, an **HTTP API** with a TypeScript **SDK**, and an embeddable **UI SDK**.
-
-![TrueForge Chat UI](./docs/images/hero.png)
-
-## Why TrueForge?
-
-Building an agent is easy. Running one well is not - you need streaming, session persistence, tool servers, sandboxing, approvals, and a UI. TrueForge gives you that out of the box:
-
-- **Initial setup from catalogs** - configure [models](https://trueforge.dev/models), [MCP servers](https://trueforge.dev/mcp-servers), [skills](https://trueforge.dev/skills), and a [sandbox](https://trueforge.dev/sandbox) once; agents pick from what you connected. Presets come from shipped YAML catalogs you can customize.
-- **Any model provider** - OpenAI, Anthropic, Google Gemini, and other catalog providers, or any OpenAI-compatible endpoint.
-- **MCP tools** - remote MCP servers with header auth or OAuth, including in-chat authorization.
-- **Skills** - git-backed `SKILL.md` instruction packs, loaded on demand in the sandbox.
-- **Sandbox as a tool** - isolated code/file execution (Daytona today; more providers planned), provisioned only when needed. Secrets stay in the harness.
-- **Human checkpoints** - tool approval, ask-user-questions, and Generative UI in chat.
-- **Context engineering** - subagents, deferred tool loading, Code Mode, large-result offloading, and compaction.
-- **Chat UI + SDK** - use the bundled UI, automate with `@truefoundry/trueforge-sdk`, or embed `@truefoundry/trueforge-ui`.
-
-It scales down and up: **local mode** (one process, SQLite) or **hosted mode** (Postgres + Redis, Docker Compose, Helm, or Railway).
-
-## Getting started
-
-### Quickstart with `npx`
+## Evaluator quickstart
 
 ```
-npx @truefoundry/trueforge@latest
+export AI_API_KEY=...   # a DeepSeek or Qwen key
+make setup               # installs Rust if missing, builds the release binary
+make run                 # opens the TUI
 ```
 
-Use the [Quickstart](https://trueforge.dev/quickstart) guide to run TrueForge using various methods (Local, Docker Compose, Kubernetes, or Railway). Connect models, tools, skills and build your first reusable agent.
+`make run` opens a popup to choose the provider (**DeepSeek** or **Qwen**) and, if `WORKSPACE`
+isn't set, to enter the workspace path. Set it directly to skip that prompt:
 
-To work on TrueForge from this repository, see [CONTRIBUTING.md](CONTRIBUTING.md).
+```
+WORKSPACE=/path/to/repo make run
+```
 
-## Architecture
+Paste a GitHub issue into the input box and press Enter; the agent reads, edits and runs
+commands in the workspace until it resolves it, streaming every step into the TUI.
 
-<p align="center">
-  <picture>
-    <source srcset="./docs/assets/architecture-dark.svg" media="(prefers-color-scheme: dark)">
-    <source srcset="./docs/assets/architecture-light.svg" media="(prefers-color-scheme: light)">
-    <img src="./docs/assets/architecture-light.svg" alt="TrueForge architecture: Chat UI and SDK connect to the TrueForge server HTTP API and agent loop, which talks to SQLite or Postgres and bring-your-own models, MCP servers, and sandbox" width="920">
-  </picture>
-</p>
+`make test` runs the offline test suite; with `AI_API_KEY` set it also runs a live smoke test
+against both providers (a small fixture repository with one failing test). `make clean` removes
+build artefacts.
 
-| Mode   | Best for                    | Storage  | Extra infra      | How to run                       |
-| ------ | --------------------------- | -------- | ---------------- | -------------------------------- |
-| Local  | Personal use, trying it out | SQLite   | None             | `npx @truefoundry/trueforge`     |
-| Hosted | Teams, multi-replica        | Postgres | Postgres + Redis | Docker Compose, Helm, or Railway |
+## Configuration
 
-> **Local mode is for your machine only.** It is a convenient way to try TrueForge — not a production or internet-facing setup. There is no login by default, and data lives in a local SQLite file. Please keep it on localhost. We cannot take responsibility for data loss or unauthorized access if local mode is used beyond that. For a shared or production deployment, use hosted mode.
+Settings are TOML, layered so each later file wins:
 
-## Documentation
+1. the committed default, embedded in the binary (`rust/config/default.toml`)
+2. the user config directory (`$XDG_CONFIG_HOME/banana-harness/config.toml`, or the platform
+   equivalent)
+3. the workspace's own `.banana-harness/config.toml`
 
-| Section                                                             | What you'll find                                                  |
-| ------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| [Introduction](https://trueforge.dev/introduction)                  | What an agent harness is and how TrueForge fits together          |
-| [Quickstart](https://trueforge.dev/quickstart)                      | Run local or hosted, build your first agent                       |
-| [Initial Setup](https://trueforge.dev/harness/initial-setup)        | Models, MCP, skills, sandbox - catalogs and overrides             |
-| [Create an Agent](https://trueforge.dev/create-agent/overview)      | Select resources; tool approval, questions, Generative UI         |
-| [Sessions](https://trueforge.dev/sessions)                          | Inspect past runs: turns, tool calls, subagents, tokens, timing   |
-| [Schedules](https://trueforge.dev/schedules)                        | Run a saved agent on a recurring cadence, unattended              |
-| [Harness Capabilities](https://trueforge.dev/key-features/overview) | Sandbox-as-tool, subagents, deferred tools, Code Mode, compaction |
-| [Setup Login](https://trueforge.dev/authentication/overview)        | Optional OIDC for shared deployments                              |
-| [Benchmarking](https://trueforge.dev/benchmarking)                  | Cost/accuracy vs Claude Managed Agents and deepagents             |
-| [SDK](https://trueforge.dev/api/overview)                           | TypeScript client: sessions, turns, events                        |
-| [Chat UI](https://trueforge.dev/chat-ui)                            | Bundled UI and embedding `@truefoundry/trueforge-ui`              |
-| [API Reference](https://trueforge.dev/api-reference)                | OpenAPI paths and schemas                                         |
+The API key is never read from a config file — only from `AI_API_KEY` in the environment.
 
-## Benchmarks
+## Key bindings
 
-We compare TrueForge against Claude Managed Agents and deepagents on the same tasks, tools, and model - same accuracy, lower cost. Reproduce it from [`benchmark/`](benchmark/). Write-up: [Benchmarking](https://trueforge.dev/benchmarking).
+Startup popup: `↑`/`↓` toggle the provider, type to fill the workspace path, `Enter` confirms,
+`q`/`Ctrl+C` quits.
 
-## Contributing
+Main screen:
 
-We love contributions - bug reports, features, and docs fixes. See [CONTRIBUTING.md](CONTRIBUTING.md) and our [Code of Conduct](CODE_OF_CONDUCT.md). Fork PRs should change source only; maintainers regenerate the SDK after merge.
+| Key | Action |
+| --- | --- |
+| `Enter` | send the message (or run the highlighted `/command`) |
+| `Shift+Enter` / `Alt+Enter` / `Ctrl+J` | insert a newline |
+| `←` `→` `↑` `↓`, `Home` / `End` (`Ctrl+A`) | move the cursor (`↑`/`↓` by visual row) |
+| `Alt+←` / `Alt+→` (also `Alt+B`/`Alt+F`, `Ctrl+←`/`Ctrl+→`) | move by word |
+| `Alt+Backspace` / `Ctrl+W` | delete the word before the cursor (`Alt+Delete`/`Alt+D` after it) |
+| `Ctrl+U` / `Ctrl+K` | delete to the start / end of the line |
+| `Ctrl+C` | cancel the running turn; twice to quit |
+| `Ctrl+B` | toggle the sidebar |
+| `Ctrl+E` | edit the input in `$EDITOR` |
+| `Ctrl+O` (or `Enter` on empty input) | expand/collapse the last tool card |
+| mouse wheel, `PgUp` / `PgDn` | scroll the transcript |
+| `Esc` | close an overlay |
 
-To report a security vulnerability, follow [SECURITY.md](SECURITY.md) instead of opening a public issue.
+On macOS, Option is Alt for the word keys above. If Option+key types a symbol instead, turn on
+"Use Option as Meta key" (Terminal.app) or set Left Option to "Esc+" (iTerm2); `Ctrl+W` and
+`Ctrl+←`/`Ctrl+→` work either way. The TUI captures the mouse for wheel scrolling, so select text
+with `Shift`+drag (`Option`+drag in iTerm2).
 
-## Talk to us
+Slash commands: `/new` (fresh session), `/sessions` (list and resume), `/provider` (switch
+DeepSeek/Qwen), `/undo` (restore the workspace to the last turn's checkpoint), `/help`, `/quit`.
+Typing `/` shows matching commands as you type: `↑`/`↓` pick one, `Tab` completes it, `Enter`
+runs it, `Esc` hides the list.
 
-- [Community Discord](https://discord.com/invite/fHeGRvakb)
-- Founder emails: [abhishek@truefoundry.com](mailto:abhishek@truefoundry.com) / [anuraag@truefoundry.com](mailto:anuraag@truefoundry.com)
+## Guardrails
 
-## License
+Every host tool goes through a permission engine (`[permission]` in config): each of `read`,
+`edit`, `glob`, `grep`, `bash`, `external_directory` and `mcp` resolves to `allow`, `ask` or
+`deny`, with pattern tables (last match wins) for `bash`, `edit`, `read` and `mcp`. The committed
+default is autonomous except for:
 
-TrueForge is released under the [MIT License](LICENSE).
+- a bash denylist (`sudo`, `su`, `rm -rf /` or `~`, `git push`, piping curl/wget into a shell,
+  `mkfs`, `dd`, shutdown/reboot, a recursive `chmod 777 /`)
+- reading `.env*` files
+- any directory outside the workspace
+
+Paths are confined to the workspace (symlinks included); the API key is redacted from every
+tool result, persisted event and the environment of shell commands; shell commands time out and
+their whole process group is killed; three identical consecutive tool calls warn the model, a
+fifth ends the turn.
+
+## Development
+
+```
+make test    # offline suite (plus the live smoke when AI_API_KEY is set)
+make lint    # cargo fmt --check, and clippy with warnings denied
+```
+
+Tests live in each crate's `tests/` folder. `rust/scripts/live_smoke.sh <deepseek|qwen>` runs the
+live smoke test standalone (needs `AI_API_KEY`); `make test` wires it in automatically when the
+key is present.

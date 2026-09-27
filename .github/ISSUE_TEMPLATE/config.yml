@@ -1,8 +1,8 @@
 blank_issues_enabled: true
 contact_links:
   - name: Documentation
-    url: https://trueforge.dev
-    about: Guides, configuration reference, and API docs.
+    url: https://github.com/avgblank/banana-harness#readme
+    about: Setup, configuration, key bindings and guardrails.
   - name: Security vulnerability
-    url: https://github.com/truefoundry/trueforge/security/advisories/new
+    url: https://github.com/avgblank/banana-harness/security/advisories/new
     about: Please report security issues privately — see SECURITY.md.
