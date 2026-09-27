@@ -1,6 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use harness_core::{Event, EventKind, ModelOutput, Provider, TurnState};
+use harness_core::{
+    Event, EventKind, McpServerState, McpServerStatus, ModelOutput, Provider, TurnState,
+};
 use harness_tui::app::App;
 use harness_tui::ui;
 use ratatui::Terminal;
@@ -134,4 +136,31 @@ fn the_status_line_shows_a_spinner_while_a_turn_runs() {
 
     let view = rendered(&app);
     assert!(view.contains("Ctrl+C to cancel"), "{view}");
+}
+
+#[test]
+fn the_status_line_shows_each_mcp_servers_state() {
+    let mut app = App::new_main(Provider::DeepSeek, std::env::temp_dir());
+    let main = app.main_mut().unwrap();
+    main.mcp = vec![
+        McpServerStatus {
+            name: "eager".to_string(),
+            state: McpServerState::Connected { tools: 3 },
+        },
+        McpServerStatus {
+            name: "lazy".to_string(),
+            state: McpServerState::Idle,
+        },
+        McpServerStatus {
+            name: "broken".to_string(),
+            state: McpServerState::Failed("boom".to_string()),
+        },
+    ];
+
+    let view = rendered(&app);
+    let status_row = view.lines().last().unwrap();
+    assert!(
+        status_row.contains("mcp: eager ● lazy ○ broken ✗"),
+        "{view}"
+    );
 }

@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use harness_core::{Event, EventKind, Provider, Session, TurnState};
+use harness_core::{Event, EventKind, McpServerStatus, Provider, Session, TurnState};
 
 /// Animation frames for the running-turn spinner.
 pub const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -40,6 +40,8 @@ pub struct MainState {
     pub last_error: Option<String>,
     /// A modal in front of the transcript, e.g. the `/sessions` picker.
     pub overlay: Option<Overlay>,
+    /// Refreshed from `Harness::mcp_status` as turn events arrive.
+    pub mcp: Vec<McpServerStatus>,
 }
 
 /// A picker shown over the main screen, closed by resuming a choice or by Esc.
@@ -155,6 +157,7 @@ impl MainState {
             quit_armed: false,
             last_error: None,
             overlay: None,
+            mcp: Vec::new(),
         }
     }
 

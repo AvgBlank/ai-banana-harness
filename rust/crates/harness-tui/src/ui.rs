@@ -1,6 +1,6 @@
 //! Renders an [`App`] into a [`Frame`]. Pure: it never mutates `app`.
 
-use harness_core::{APP_NAME, Provider};
+use harness_core::{APP_NAME, McpServerState, Provider};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::text::{Line, Span, Text};
@@ -222,10 +222,34 @@ fn draw_status(frame: &mut Frame, state: &MainState, area: Rect) {
     } else {
         theme::muted()
     };
+    let mcp = mcp_status_line(state);
+    let [left, right] = Layout::horizontal([
+        Constraint::Min(0),
+        Constraint::Length(u16::try_from(mcp.width()).unwrap_or(u16::MAX)),
+    ])
+    .areas(area);
     frame.render_widget(
         Paragraph::new(text).style(style).alignment(Alignment::Left),
-        area,
+        left,
     );
+    frame.render_widget(Paragraph::new(mcp).alignment(Alignment::Right), right);
+}
+
+/// `mcp: fs ● other ○` — connected, not started yet, or `✗` failed. Empty with no servers.
+fn mcp_status_line(state: &MainState) -> Line<'static> {
+    if state.mcp.is_empty() {
+        return Line::default();
+    }
+    let mut spans = vec![Span::styled(" mcp:", theme::muted())];
+    for server in &state.mcp {
+        let (mark, style) = match server.state {
+            McpServerState::Idle => ("○", theme::muted()),
+            McpServerState::Connected { .. } => ("●", theme::accent()),
+            McpServerState::Failed(_) => ("✗", theme::error()),
+        };
+        spans.push(Span::styled(format!(" {} {mark}", server.name), style));
+    }
+    Line::from(spans)
 }
 
 /// A collapsed one-line tool card: the call, and its outcome once known. A blocked call gets a

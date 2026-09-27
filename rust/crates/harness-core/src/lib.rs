@@ -9,15 +9,20 @@ mod config;
 mod event;
 mod harness;
 mod instructions;
+mod mcp;
 mod skills;
+mod tools;
 
 pub use config::{
-    AgentConfig, Config, ConfigPaths, Provider, ProviderConfig, Providers, SkillsConfig,
+    AgentConfig, Config, ConfigPaths, PatternRules, PermissionAction, PermissionConfig, Provider,
+    ProviderConfig, Providers, SkillsConfig,
 };
 pub use event::{Event, EventKind, ModelOutput, TurnState};
 pub use harness::{Harness, HarnessOptions, LAST_PROVIDER_SETTING, TurnHandle};
 pub use harness_llm::Usage;
+pub use harness_mcp::{McpServerConfig, McpTransport};
 pub use harness_store::{Session, Store};
+pub use mcp::{McpServerState, McpServerStatus};
 pub use skills::{LoadedSkills, Skill};
 
 /// The product name. Renaming the product touches these two constants and the binary's package name.

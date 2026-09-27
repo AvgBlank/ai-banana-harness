@@ -6,6 +6,7 @@
 //!   <agent-capabilities>
 //!     <internal-messages>...</internal-messages>
 //!     <workspace>...</workspace>
+//!     <deferred-tools-instructions>...</deferred-tools-instructions>   (only with deferred MCP servers)
 //!     <skills>...</skills>
 //!     <sub-agents>...</sub-agents>        (only when subagents are enabled)
 //!   </agent-capabilities>
@@ -40,6 +41,9 @@ const SKILLS_PREAMBLE: &str = "\
 4. To use a skill, read `path/SKILL.md` first with the read-file tool.
 5. Do not list the skill's directory unless SKILL.md references other files and there is reason to.";
 
+/// A deferred server's description is cut to this many characters in the prompt.
+const MAX_DEFERRED_DESCRIPTION_CHARS: usize = 200;
+
 const SUBAGENTS_TEXT: &str = "\
 The Agent can delegate an independent, well-defined subtask to another agent with the \
 create_sub_agent tool. Up to five subagents run in parallel. A subagent has the Agent's tools but \
@@ -55,6 +59,8 @@ pub struct SystemPromptInput<'a> {
     pub agents_md: Option<&'a str>,
     pub skills: &'a [Skill],
     pub subagents_enabled: bool,
+    /// MCP servers behind the deferred meta-tools: name and configured description.
+    pub deferred_mcp_servers: &'a [(&'a str, Option<&'a str>)],
     /// `true` for the turn's root thread; `false` for a subagent thread (ticket 07).
     pub root: bool,
 }
@@ -69,6 +75,10 @@ pub fn system_prompt(input: SystemPromptInput<'_>) -> String {
     let capabilities_body = join(&[
         section("internal-messages", INTERNAL_MESSAGE_RULE),
         section("workspace", &workspace_section(input.workspace)),
+        section(
+            "deferred-tools-instructions",
+            &deferred_tools_section(input.deferred_mcp_servers),
+        ),
         section("skills", &skills_section(input.skills)),
         if input.subagents_enabled {
             section("sub-agents", SUBAGENTS_TEXT)
@@ -100,6 +110,27 @@ fn workspace_section(workspace: &Path) -> String {
         "The Agent's workspace is {}. All file reads, edits and commands must stay within this \
 directory; the Agent's tools cannot reach outside it.",
         workspace.display()
+    )
+}
+
+fn deferred_tools_section(servers: &[(&str, Option<&str>)]) -> String {
+    if servers.is_empty() {
+        return String::new();
+    }
+    let list: Vec<String> = servers
+        .iter()
+        .map(|(name, description)| match description {
+            Some(d) => {
+                let d: String = d.chars().take(MAX_DEFERRED_DESCRIPTION_CHARS).collect();
+                format!("- {name}: \"{d}\"")
+            }
+            None => format!("- {name}"),
+        })
+        .collect();
+    format!(
+        "The following MCP servers have deferred tool loading. Their tools are NOT pre-loaded.\n\
+{}\n\nThe Agent MUST use list_tools and get_tool_info to discover tools before calling them.",
+        list.join("\n")
     )
 }
 

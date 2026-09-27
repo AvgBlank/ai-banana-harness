@@ -73,6 +73,10 @@ pub async fn run() -> Result<()> {
                 let done = matches!(event.kind, EventKind::TurnDone { .. });
                 if let Some(main) = app.main_mut() {
                     main.apply_event(event);
+                    // A turn is what connects MCP servers, so its events are when state changes.
+                    if let Some(h) = harness.as_ref() {
+                        main.mcp = h.mcp_status();
+                    }
                 }
                 if done {
                     turn = None;
@@ -204,9 +208,12 @@ fn handle_terminal_event(
                             return Ok(false);
                         };
                         let (opened, sid) = open_harness(taken, provider, path.clone())?;
+                        app.enter_main(provider, path);
+                        if let Some(main) = app.main_mut() {
+                            main.mcp = opened.mcp_status();
+                        }
                         *harness = Some(opened);
                         *session_id = sid;
-                        app.enter_main(provider, path);
                     }
                     Err(e) => {
                         if let Some(s) = app.startup_mut() {

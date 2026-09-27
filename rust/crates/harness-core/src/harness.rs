@@ -3,9 +3,7 @@ use std::str::FromStr;
 use std::sync::{Arc, LazyLock, Mutex};
 
 use anyhow::{Context, Result, anyhow, bail};
-use harness_llm::{
-    ChatClient, ChatEvent, ClientConfig, Dialect, Message, Role, ToolDefinition, Usage,
-};
+use harness_llm::{ChatClient, ChatEvent, ClientConfig, Dialect, Message, Role, Usage};
 use harness_store::{FinishTurn, NewEvent, NewSession, NewTurn, Session, Store, UpsertThread};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -14,7 +12,9 @@ use ulid::{Generator, Ulid};
 use crate::config::{Config, Provider};
 use crate::event::{Event, EventKind, ModelOutput, TurnState};
 use crate::instructions::{SystemPromptInput, system_prompt};
+use crate::mcp::{McpRegistry, McpServerStatus};
 use crate::skills::load_skills;
+use crate::tools::TurnTools;
 
 /// The setting key that stores the provider last chosen, read back to preselect the startup
 /// popup and updated whenever `/provider` switches a session.
@@ -46,6 +46,8 @@ struct Inner {
     api_key: String,
     workspace: PathBuf,
     redactor: Redactor,
+    /// Lives as long as the harness, so a server connected in one turn is reused by the next.
+    mcp: Arc<McpRegistry>,
 }
 
 pub struct TurnHandle {
@@ -73,8 +75,14 @@ impl Harness {
             temperature: provider_config.temperature,
             seed: provider_config.seed,
         })?;
+        let mcp = McpRegistry::new(
+            &options.config.mcp,
+            options.config.permission.mcp.clone(),
+            options.workspace.clone(),
+        );
         Ok(Self {
             inner: Arc::new(Inner {
+                mcp: Arc::new(mcp),
                 store: options.store,
                 config: options.config,
                 provider: options.provider,
@@ -121,6 +129,11 @@ impl Harness {
             .store
             .set_setting(LAST_PROVIDER_SETTING, provider.as_str())?;
         Ok(())
+    }
+
+    /// Each configured MCP server's connection state, in name order.
+    pub fn mcp_status(&self) -> Vec<McpServerStatus> {
+        self.inner.mcp.status()
     }
 
     /// Starts a turn in the background. The stream always ends with `turn.done`.
@@ -232,6 +245,7 @@ impl TurnRunner {
             agents_md: agents_md.as_deref(),
             skills: &loaded_skills.skills,
             subagents_enabled: inner.config.agent.subagents,
+            deferred_mcp_servers: &inner.mcp.deferred_servers(),
             root: true,
         });
         let history: Vec<Message> = existing_thread
@@ -252,15 +266,14 @@ impl TurnRunner {
             tool_calls: Vec::new(),
             tool_call_id: None,
         });
-        let tool_specs = harness_tools::host_tool_specs();
-        let tools: Vec<ToolDefinition> = tool_specs
-            .into_iter()
-            .map(|spec| ToolDefinition {
-                name: spec.name,
-                description: spec.description,
-                parameters: spec.parameters,
-            })
-            .collect();
+        // Starts any preload MCP server not yet connected, which can take a while.
+        let tools = tokio::select! {
+            biased;
+            () = self.cancel.cancelled() => return Ok(TurnState::Cancelled),
+            tools = TurnTools::build(Arc::clone(&inner.mcp), inner.workspace.clone()) => {
+                Arc::new(tools)
+            }
+        };
 
         // One iteration per LLM round: stream an answer, and if it asked for tool calls, run
         // them and go around again. A round with no tool calls ends the turn.
@@ -268,7 +281,7 @@ impl TurnRunner {
             let mut stream = tokio::select! {
                 biased;
                 () = self.cancel.cancelled() => return Ok(TurnState::Cancelled),
-                result = client.stream(&messages, &tools) => result?,
+                result = client.stream(&messages, &tools.definitions) => result?,
             };
             let message_id = new_id();
             self.forward(EventKind::ModelMessage {
@@ -351,14 +364,12 @@ impl TurnRunner {
                 .await?;
             }
 
-            // Each host tool call is blocking filesystem work; spawn_blocking runs them on
-            // separate OS threads so they genuinely execute in parallel.
-            let workspace = inner.workspace.clone();
+            // All of a round's calls run concurrently; results are still recorded in order.
             let mut handles = Vec::with_capacity(completion.tool_calls.len());
             for call in completion.tool_calls.clone() {
-                let workspace = workspace.clone();
-                handles.push(tokio::task::spawn_blocking(move || {
-                    harness_tools::call_by_name(&workspace, &call.name, &call.arguments)
+                let tools = Arc::clone(&tools);
+                handles.push(tokio::spawn(async move {
+                    tools.call(&call.name, &call.arguments).await
                 }));
             }
             let mut results = Vec::with_capacity(handles.len());

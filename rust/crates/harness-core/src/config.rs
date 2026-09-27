@@ -1,8 +1,10 @@
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 use std::str::FromStr;
 
 use anyhow::{Context, Result, bail};
+use harness_mcp::McpServerConfig;
 use serde::Deserialize;
 
 const DEFAULT_CONFIG: &str = include_str!("../../../config/default.toml");
@@ -12,6 +14,11 @@ pub struct Config {
     pub providers: Providers,
     pub agent: AgentConfig,
     pub skills: SkillsConfig,
+    #[serde(default)]
+    pub permission: PermissionConfig,
+    /// `[mcp.<name>]` servers, keyed by name.
+    #[serde(default)]
+    pub mcp: BTreeMap<String, McpServerConfig>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -37,6 +44,50 @@ pub struct AgentConfig {
 #[derive(Clone, Debug, Deserialize)]
 pub struct SkillsConfig {
     pub paths: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct PermissionConfig {
+    /// MCP tool-name patterns, e.g. `{ "delete_*" = "deny" }`; the last matching pattern wins.
+    #[serde(default)]
+    pub mcp: PatternRules,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PermissionAction {
+    Allow,
+    Ask,
+    Deny,
+}
+
+/// A `pattern = action` table in document order (the `toml` crate's `preserve_order`), since
+/// the last matching pattern wins.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(try_from = "toml::Table")]
+pub struct PatternRules(pub Vec<(String, PermissionAction)>);
+
+impl TryFrom<toml::Table> for PatternRules {
+    type Error = toml::de::Error;
+
+    fn try_from(table: toml::Table) -> Result<Self, Self::Error> {
+        table
+            .into_iter()
+            .map(|(pattern, action)| Ok((pattern, action.try_into()?)))
+            .collect::<Result<_, _>>()
+            .map(Self)
+    }
+}
+
+impl PatternRules {
+    /// The last rule whose pattern matches `text`, if any.
+    pub fn resolve(&self, text: &str) -> Option<(&str, PermissionAction)> {
+        self.0
+            .iter()
+            .rev()
+            .find(|(pattern, _)| harness_tools::pattern::glob_match(pattern, text))
+            .map(|(pattern, action)| (pattern.as_str(), *action))
+    }
 }
 
 /// Optional overlay files, later ones winning. Both are skipped silently when absent.
