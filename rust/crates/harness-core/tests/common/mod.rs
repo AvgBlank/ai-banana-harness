@@ -236,6 +236,18 @@ impl TestHarness {
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().join("workspace");
         std::fs::create_dir_all(&workspace).unwrap();
+        // `ignore::WalkBuilder` only honours `.gitignore` files inside an actual git repo
+        // (`require_git` defaults to true), and the tool guardrail tests want a real workspace
+        // to canonicalize paths against.
+        assert!(
+            std::process::Command::new("git")
+                .args(["init", "-q"])
+                .current_dir(&workspace)
+                .status()
+                .unwrap()
+                .success(),
+            "git init failed in the test workspace"
+        );
         let db_path = dir.path().join("harness.db");
         let fake = FakeProvider::start().await;
         config.providers.deepseek.base_url = fake.base_url.clone();

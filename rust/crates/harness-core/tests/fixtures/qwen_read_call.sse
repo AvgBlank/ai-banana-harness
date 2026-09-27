@@ -1,0 +1,14 @@
+data: {"choices":[{"delta":{"content":"","role":"assistant","function_call":null,"refusal":null,"audio":null},"index":0,"logprobs":null,"finish_reason":null}],"object":"chat.completion.chunk","usage":null,"created":1790000200,"system_fingerprint":null,"model":"qwen3.8-flash","id":"chatcmpl-tool-0001"}
+
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_qwen_1","type":"function","function":{"name":"read_file","arguments":""}}],"function_call":null,"refusal":null,"audio":null},"index":0,"logprobs":null,"finish_reason":null}],"object":"chat.completion.chunk","usage":null,"created":1790000200,"system_fingerprint":null,"model":"qwen3.8-flash","id":"chatcmpl-tool-0001"}
+
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"","type":"function","function":{"arguments":"{\"path\""}}],"function_call":null,"refusal":null,"audio":null},"index":0,"logprobs":null,"finish_reason":null}],"object":"chat.completion.chunk","usage":null,"created":1790000200,"system_fingerprint":null,"model":"qwen3.8-flash","id":"chatcmpl-tool-0001"}
+
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"","type":"function","function":{"arguments":": \"__PATH__\"}"}}],"function_call":null,"refusal":null,"audio":null},"index":0,"logprobs":null,"finish_reason":null}],"object":"chat.completion.chunk","usage":null,"created":1790000200,"system_fingerprint":null,"model":"qwen3.8-flash","id":"chatcmpl-tool-0001"}
+
+data: {"choices":[{"delta":{},"finish_reason":"tool_calls","index":0,"logprobs":null}],"object":"chat.completion.chunk","usage":null,"created":1790000200,"system_fingerprint":null,"model":"qwen3.8-flash","id":"chatcmpl-tool-0001"}
+
+data: {"choices":[],"object":"chat.completion.chunk","usage":{"prompt_tokens":30,"completion_tokens":8,"total_tokens":38,"prompt_tokens_details":{"cached_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"text_tokens":8}},"created":1790000200,"system_fingerprint":null,"model":"qwen3.8-flash","id":"chatcmpl-tool-0001"}
+
+data: [DONE]
+

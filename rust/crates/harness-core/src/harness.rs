@@ -1,8 +1,10 @@
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, Mutex};
 
-use anyhow::{Result, bail};
-use harness_llm::{ChatClient, ChatEvent, ClientConfig, Dialect, Message, Role, Usage};
+use anyhow::{Context, Result, bail};
+use harness_llm::{
+    ChatClient, ChatEvent, ClientConfig, Dialect, Message, Role, ToolDefinition, Usage,
+};
 use harness_store::{FinishTurn, NewEvent, NewSession, NewTurn, Store};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -173,66 +175,147 @@ impl TurnRunner {
             subagents_enabled: inner.config.agent.subagents,
             root: true,
         });
-        let messages = [
+        let mut messages = vec![
             Message {
                 role: Role::System,
                 content: prompt,
+                tool_calls: Vec::new(),
+                tool_call_id: None,
             },
             Message {
                 role: Role::User,
                 content: input.to_string(),
+                tool_calls: Vec::new(),
+                tool_call_id: None,
             },
         ];
-        let mut stream = tokio::select! {
-            biased;
-            () = self.cancel.cancelled() => return Ok(TurnState::Cancelled),
-            result = inner.client.stream(&messages) => result?,
-        };
-        let message_id = new_id();
-        self.forward(EventKind::ModelMessage {
-            thread_id: thread_id.clone(),
-            message_id: message_id.clone(),
-            message: None,
-        })
-        .await;
+        let tool_specs = harness_tools::host_tool_specs();
+        let tools: Vec<ToolDefinition> = tool_specs
+            .into_iter()
+            .map(|spec| ToolDefinition {
+                name: spec.name,
+                description: spec.description,
+                parameters: spec.parameters,
+            })
+            .collect();
+
+        // One iteration per LLM round: stream an answer, and if it asked for tool calls, run
+        // them and go around again. A round with no tool calls ends the turn.
         loop {
-            let chat_event = tokio::select! {
+            let mut stream = tokio::select! {
                 biased;
                 () = self.cancel.cancelled() => return Ok(TurnState::Cancelled),
-                chat_event = stream.next() => chat_event?,
+                result = inner.client.stream(&messages, &tools) => result?,
             };
-            let Some(chat_event) = chat_event else {
-                break;
-            };
-            match chat_event {
-                ChatEvent::Delta(content) => {
-                    self.forward(EventKind::ModelMessageDelta {
-                        thread_id: thread_id.clone(),
-                        message_id: message_id.clone(),
-                        content,
-                    })
-                    .await;
-                }
-                ChatEvent::Done(completion) => {
-                    usage.clone_from(&completion.usage);
-                    let finish_reason = completion.finish_reason.clone();
-                    self.emit(EventKind::ModelMessage {
-                        thread_id: thread_id.clone(),
-                        message_id: message_id.clone(),
-                        message: Some(ModelOutput {
-                            content: completion.content,
-                            finish_reason: completion.finish_reason,
-                            usage: completion.usage,
-                        }),
-                    })
-                    .await?;
-                    if finish_reason == "length" {
-                        bail!("max_tokens breached");
+            let message_id = new_id();
+            self.forward(EventKind::ModelMessage {
+                thread_id: thread_id.clone(),
+                message_id: message_id.clone(),
+                message: None,
+            })
+            .await;
+            let completion = loop {
+                let chat_event = tokio::select! {
+                    biased;
+                    () = self.cancel.cancelled() => return Ok(TurnState::Cancelled),
+                    chat_event = stream.next() => chat_event?,
+                };
+                let Some(chat_event) = chat_event else {
+                    bail!("provider stream ended without a final message");
+                };
+                match chat_event {
+                    ChatEvent::Delta(content) => {
+                        self.forward(EventKind::ModelMessageDelta {
+                            thread_id: thread_id.clone(),
+                            message_id: message_id.clone(),
+                            content,
+                        })
+                        .await;
+                    }
+                    ChatEvent::Done(completion) => {
+                        usage.clone_from(&completion.usage);
+                        let finish_reason = completion.finish_reason.clone();
+                        self.emit(EventKind::ModelMessage {
+                            thread_id: thread_id.clone(),
+                            message_id: message_id.clone(),
+                            message: Some(ModelOutput {
+                                content: completion.content.clone(),
+                                finish_reason: completion.finish_reason.clone(),
+                                usage: completion.usage.clone(),
+                            }),
+                        })
+                        .await?;
+                        if finish_reason == "length" {
+                            bail!("max_tokens breached");
+                        }
+                        break completion;
                     }
                 }
+            };
+
+            if completion.tool_calls.is_empty() {
+                return Ok(TurnState::Done);
+            }
+
+            messages.push(Message {
+                role: Role::Assistant,
+                content: completion.content,
+                tool_calls: completion
+                    .tool_calls
+                    .iter()
+                    .map(|call| harness_llm::ToolCallRequest {
+                        id: call.id.clone(),
+                        kind: "function".to_string(),
+                        function: harness_llm::FunctionCall {
+                            name: call.name.clone(),
+                            arguments: call.arguments.clone(),
+                        },
+                    })
+                    .collect(),
+                tool_call_id: None,
+            });
+
+            for call in &completion.tool_calls {
+                self.emit(EventKind::ToolCall {
+                    thread_id: thread_id.clone(),
+                    tool_call_id: call.id.clone(),
+                    name: call.name.clone(),
+                    arguments: call.arguments.clone(),
+                })
+                .await?;
+            }
+
+            // Each host tool call is blocking filesystem work; spawn_blocking runs them on
+            // separate OS threads so they genuinely execute in parallel.
+            let workspace = inner.workspace.clone();
+            let mut handles = Vec::with_capacity(completion.tool_calls.len());
+            for call in completion.tool_calls.clone() {
+                let workspace = workspace.clone();
+                handles.push(tokio::task::spawn_blocking(move || {
+                    harness_tools::call_by_name(&workspace, &call.name, &call.arguments)
+                }));
+            }
+            let mut results = Vec::with_capacity(handles.len());
+            for handle in handles {
+                results.push(handle.await.context("tool call task panicked")?);
+            }
+
+            for (call, result) in completion.tool_calls.iter().zip(results) {
+                self.emit(EventKind::ToolResponse {
+                    thread_id: thread_id.clone(),
+                    tool_call_id: call.id.clone(),
+                    content: result.content.clone(),
+                    blocked: result.blocked,
+                })
+                .await?;
+                messages.push(Message {
+                    role: Role::Tool,
+                    content: result.content,
+                    tool_calls: Vec::new(),
+                    tool_call_id: Some(call.id.clone()),
+                });
             }
         }
-        Ok(TurnState::Done)
     }
 
     /// Persists a durable event (redacted), then forwards it.

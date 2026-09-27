@@ -2,7 +2,7 @@
 //! (`run`) that both use.
 
 pub mod app;
-mod theme;
+pub mod theme;
 pub mod ui;
 
 use std::io;
