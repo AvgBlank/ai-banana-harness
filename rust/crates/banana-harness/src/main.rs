@@ -4,9 +4,10 @@ use std::process::ExitCode;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use etcetera::BaseStrategy;
 use harness_core::{
-    Config, EventKind, Harness, HarnessOptions, Provider, Store, TurnState, api_key_from_env,
-    default_db_path,
+    APP_SLUG, Config, ConfigPaths, EventKind, Harness, HarnessOptions, Provider, Store, TurnState,
+    api_key_from_env, default_db_path,
 };
 
 #[derive(Parser)]
@@ -66,8 +67,16 @@ async fn headless(
     let workspace = workspace
         .canonicalize()
         .with_context(|| format!("workspace {} not found", workspace.display()))?;
+    let user_config = etcetera::choose_base_strategy()
+        .ok()
+        .map(|base| base.config_dir().join(APP_SLUG).join("config.toml"));
+    let workspace_config = workspace.join(".banana-harness").join("config.toml");
+    let config = Config::load(ConfigPaths {
+        user: user_config.as_deref(),
+        workspace: Some(&workspace_config),
+    })?;
     let harness = Harness::open(HarnessOptions {
-        config: Config::embedded_default()?,
+        config,
         store: Store::open(&default_db_path()?)?,
         provider,
         api_key,

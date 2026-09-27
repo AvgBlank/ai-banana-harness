@@ -10,6 +10,8 @@ use ulid::{Generator, Ulid};
 
 use crate::config::{Config, Provider};
 use crate::event::{Event, EventKind, ModelOutput, TurnState};
+use crate::instructions::{SystemPromptInput, system_prompt};
+use crate::skills::load_skills;
 
 pub struct HarnessOptions {
     pub config: Config,
@@ -158,10 +160,23 @@ impl TurnRunner {
         .await?;
 
         let thread_id = new_id();
+        let agents_md = std::fs::read_to_string(inner.workspace.join("AGENTS.md")).ok();
+        let loaded_skills = load_skills(&inner.config.skills.paths, &inner.workspace);
+        for warning in &loaded_skills.warnings {
+            eprintln!("warning: {warning}");
+        }
+        let prompt = system_prompt(SystemPromptInput {
+            workspace: &inner.workspace,
+            config_instructions: &inner.config.agent.instructions,
+            agents_md: agents_md.as_deref(),
+            skills: &loaded_skills.skills,
+            subagents_enabled: inner.config.agent.subagents,
+            root: true,
+        });
         let messages = [
             Message {
                 role: Role::System,
-                content: inner.config.agent.instructions.clone(),
+                content: prompt,
             },
             Message {
                 role: Role::User,

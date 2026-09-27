@@ -14,6 +14,11 @@ seed = 42
 
 [agent]
 instructions = """
-You are an autonomous coding agent working in the user's workspace. \
 Resolve the user's task completely: understand the relevant code, make focused changes, \
 and verify them. Be concise and precise."""
+# Subagents (ticket 07) are not implemented yet; the config flag exists so the system
+# prompt's <sub-agents> section can be exercised ahead of it.
+subagents = false
+
+[skills]
+paths = [".banana-harness/skills", "~/.config/banana-harness/skills"]
