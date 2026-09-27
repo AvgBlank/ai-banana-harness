@@ -1,9 +1,17 @@
 //! The TUI's state, fed by key input and by `harness_core::Event`s. Kept independent of the
 //! terminal so tests can drive it directly and render it with ratatui's `TestBackend`.
 
+use std::cell::Cell;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
-use harness_core::{Event, EventKind, Provider, Session, TurnState};
+use harness_core::{Config, Event, EventKind, Provider, Session, TurnState, Usage};
+
+/// The sidebar hides itself below this terminal width, whatever its toggle says.
+pub const SIDEBAR_MIN_WIDTH: u16 = 100;
+
+/// Lines moved per PgUp/PgDn.
+const SCROLL_STEP: usize = 10;
 
 /// Animation frames for the running-turn spinner.
 pub const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -14,7 +22,7 @@ pub struct App {
 
 pub enum Screen {
     Startup(StartupState),
-    Main(MainState),
+    Main(Box<MainState>),
 }
 
 /// The provider + workspace popup shown before a session opens.
@@ -40,14 +48,43 @@ pub struct MainState {
     pub last_error: Option<String>,
     /// A modal in front of the transcript, e.g. the `/sessions` picker.
     pub overlay: Option<Overlay>,
+    /// The config the harness runs with; the sidebar reads the model and context window from
+    /// it. `None` only in tests that don't set it.
+    pub config: Option<Config>,
+    /// The Ctrl+B toggle; see [`MainState::sidebar_visible`] for the width rule.
+    pub sidebar_open: bool,
+    /// The transcript's first visible line, or `None` to follow the newest output.
+    pub scroll_top: Option<usize>,
+    /// The largest useful `scroll_top`, recorded by each draw so PgUp stops at the real top.
+    pub scroll_max: Cell<usize>,
+    /// The latest completion's usage: how full the context is.
+    pub last_usage: Option<Usage>,
+    /// Tokens used by the session so far, summed over every completion.
+    pub session_tokens: Usage,
+    turn_tokens: u64,
+    turn_started: Option<Instant>,
+    /// The last finished turn's duration, shown once the turn is no longer running.
+    pub last_turn_duration: Option<Duration>,
+    /// The workspace's uncommitted changes, refreshed by the run loop as tools run.
+    pub modified_files: Vec<FileChange>,
 }
 
-/// A picker shown over the main screen, closed by resuming a choice or by Esc.
+/// One changed file in the workspace, with its added and removed line counts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileChange {
+    pub path: String,
+    pub added: u64,
+    pub removed: u64,
+}
+
+/// A modal shown over the main screen, closed by Esc.
 pub enum Overlay {
     Sessions {
         sessions: Vec<Session>,
         selected: usize,
     },
+    /// `/help`: commands and key bindings.
+    Help,
 }
 
 pub enum TranscriptItem {
@@ -56,6 +93,15 @@ pub enum TranscriptItem {
     Tool(ToolCallItem),
     /// A status note for a slash command, e.g. a new or resumed session.
     System(String),
+    /// The end-of-run card added when a turn finishes.
+    Summary(SummaryCard),
+}
+
+pub struct SummaryCard {
+    pub state: TurnState,
+    pub files_changed: usize,
+    pub tokens: u64,
+    pub duration: Duration,
 }
 
 pub struct AssistantMessage {
@@ -95,12 +141,12 @@ impl App {
     /// don't care about the popup.
     pub fn new_main(provider: Provider, workspace: PathBuf) -> Self {
         Self {
-            screen: Screen::Main(MainState::new(provider, workspace)),
+            screen: Screen::Main(Box::new(MainState::new(provider, workspace))),
         }
     }
 
     pub fn enter_main(&mut self, provider: Provider, workspace: PathBuf) {
-        self.screen = Screen::Main(MainState::new(provider, workspace));
+        self.screen = Screen::Main(Box::new(MainState::new(provider, workspace)));
     }
 
     pub fn startup_mut(&mut self) -> Option<&mut StartupState> {
@@ -155,15 +201,67 @@ impl MainState {
             quit_armed: false,
             last_error: None,
             overlay: None,
+            config: None,
+            sidebar_open: true,
+            scroll_top: None,
+            scroll_max: Cell::new(0),
+            last_usage: None,
+            session_tokens: Usage::default(),
+            turn_tokens: 0,
+            turn_started: None,
+            last_turn_duration: None,
+            modified_files: Vec::new(),
         }
     }
 
-    /// `/new`: clears the transcript for a freshly created session.
-    pub fn start_new_session(&mut self) {
+    pub fn sidebar_visible(&self, width: u16) -> bool {
+        self.sidebar_open && width >= SIDEBAR_MIN_WIDTH
+    }
+
+    pub fn toggle_sidebar(&mut self) {
+        self.sidebar_open = !self.sidebar_open;
+    }
+
+    pub fn open_help(&mut self) {
+        self.overlay = Some(Overlay::Help);
+    }
+
+    pub fn scroll_up(&mut self) {
+        let top = self.scroll_top.unwrap_or(self.scroll_max.get());
+        self.scroll_top = Some(top.saturating_sub(SCROLL_STEP));
+    }
+
+    /// Scrolling back past the bottom resumes following new output.
+    pub fn scroll_down(&mut self) {
+        if let Some(top) = self.scroll_top {
+            let next = top + SCROLL_STEP;
+            self.scroll_top = (next < self.scroll_max.get()).then_some(next);
+        }
+    }
+
+    /// The running turn's elapsed time, else the last turn's duration.
+    pub fn elapsed(&self) -> Option<Duration> {
+        match self.turn_started {
+            Some(started) if self.turn_running => Some(started.elapsed()),
+            _ => self.last_turn_duration,
+        }
+    }
+
+    /// Clears everything tied to the previous session's conversation.
+    fn reset_conversation(&mut self) {
         self.transcript.clear();
         self.input.clear();
         self.turn_running = false;
         self.last_error = None;
+        self.scroll_top = None;
+        self.last_usage = None;
+        self.session_tokens = Usage::default();
+        self.last_turn_duration = None;
+    }
+
+    /// `/new`: clears the transcript for a freshly created session.
+    pub fn start_new_session(&mut self) {
+        self.reset_conversation();
         self.push_system_message("Started a new session.".to_string());
     }
 
@@ -185,10 +283,7 @@ impl MainState {
         self.overlay = None;
         self.provider = session.provider.parse().unwrap_or(self.provider);
         let label = session.title.as_deref().unwrap_or(&session.id).to_string();
-        self.transcript.clear();
-        self.input.clear();
-        self.turn_running = false;
-        self.last_error = None;
+        self.reset_conversation();
         self.push_system_message(format!("Resumed session: {label}"));
     }
 
@@ -212,6 +307,9 @@ impl MainState {
         self.transcript.push(TranscriptItem::User(text));
         self.turn_running = true;
         self.last_error = None;
+        self.scroll_top = None;
+        self.turn_tokens = 0;
+        self.turn_started = Some(Instant::now());
     }
 
     /// Applies one event from a turn's stream. Deltas append to the streaming message in
@@ -246,6 +344,9 @@ impl MainState {
                 message_id,
                 message: Some(output),
             } => {
+                if let Some(usage) = output.usage {
+                    self.record_usage(usage);
+                }
                 if let Some(message) = self.assistant_message_mut(&thread_id, &message_id) {
                     message.content = output.content;
                 }
@@ -256,6 +357,17 @@ impl MainState {
                 if state == TurnState::Error {
                     self.last_error = error;
                 }
+                let duration = self
+                    .turn_started
+                    .take()
+                    .map_or(Duration::ZERO, |started| started.elapsed());
+                self.last_turn_duration = Some(duration);
+                self.transcript.push(TranscriptItem::Summary(SummaryCard {
+                    state,
+                    files_changed: self.modified_files.len(),
+                    tokens: self.turn_tokens,
+                    duration,
+                }));
             }
             EventKind::ToolCall {
                 tool_call_id,
@@ -281,6 +393,14 @@ impl MainState {
                 }
             }
         }
+    }
+
+    fn record_usage(&mut self, usage: Usage) {
+        self.session_tokens.prompt_tokens += usage.prompt_tokens;
+        self.session_tokens.completion_tokens += usage.completion_tokens;
+        self.session_tokens.total_tokens += usage.total_tokens;
+        self.turn_tokens += usage.total_tokens;
+        self.last_usage = Some(usage);
     }
 
     fn assistant_message_mut(

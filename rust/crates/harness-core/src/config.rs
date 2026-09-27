@@ -26,6 +26,8 @@ pub struct ProviderConfig {
     pub model: String,
     pub temperature: f64,
     pub seed: Option<u64>,
+    /// The model's context window in tokens.
+    pub context_length: u64,
 }
 
 #[derive(Clone, Debug, Deserialize)]

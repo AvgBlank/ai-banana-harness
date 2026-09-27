@@ -5,11 +5,13 @@
 base_url = "https://api.deepseek.com"
 model = "deepseek-flash"
 temperature = 0.0
+context_length = 1048576
 
 [providers.qwen]
 base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 model = "qwen3.8-flash"
 temperature = 0.0
+context_length = 1000000
 seed = 42
 
 [agent]
