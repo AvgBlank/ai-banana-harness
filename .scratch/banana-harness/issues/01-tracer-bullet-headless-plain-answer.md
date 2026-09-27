@@ -72,7 +72,7 @@ The start marker and deltas are forwarded only. The other events are redacted, p
 
 **Makefile** (repo root):
 - `setup`: runs `check-cc` and `install-rust` (rustup `--profile minimal`, only when no cargo is found), then `cargo build --release --locked`.
-- `run`: runs `rust/target/release/banana-harness`. `AI_API_KEY` and `WORKSPACE` are inherited from the environment or the make command line.
+- `run`: runs `target/release/banana-harness`. `AI_API_KEY` and `WORKSPACE` are inherited from the environment or the make command line.
 - `test`: `cargo test --workspace --locked`.
 - `lint`: `fmt --check` plus clippy on all targets with `-D warnings`.
 - `clean`.

@@ -34,7 +34,7 @@ hosted-product doc under `docs/` (only `docs/adr/` remains). `patches/` and vend
 existed in this repo.
 
 **Replaced / rewritten:** `.github/workflows/ci.yml` is one Rust job (`rustup toolchain install`
-from `rust/rust-toolchain.toml`, `make lint`, `make test`) on `ubuntu-latest` and `macos-latest`;
+from `rust-toolchain.toml`, `make lint`, `make test`) on `ubuntu-latest` and `macos-latest`;
 `dependabot.yml` tracks cargo in `/rust` (ignoring the exactly-pinned `rmcp`) and actions. The
 README moved from `rust/README.md` to the root (one copy; paths fixed). `AGENTS.md` is rewritten
 for Rust (crate boundaries, anyhow, no `unwrap`, tests in `tests/`, glossary/ADR upkeep, the
@@ -43,7 +43,7 @@ for Rust (crate boundaries, anyhow, no `unwrap`, tests in `tests/`, glossary/ADR
 adds the fork's copyright line. Security/conduct contacts and repo links point at
 `github.com/avgblank/banana-harness`.
 
-**Kept on purpose:** `rust/`, `.scratch/`, `docs/adr/`, `CONTEXT.md`, `.env.example`. The
+**Kept on purpose:** the Rust workspace (since moved from `rust/` to the repository root), `.scratch/`, `docs/adr/`, `CONTEXT.md`, `.env.example`. The
 "Ported from TrueForge" comments in the Rust code are accurate provenance. The compaction prompt
 still says "typescript code changes" because the spec requires TrueForge's prompt verbatim.
 

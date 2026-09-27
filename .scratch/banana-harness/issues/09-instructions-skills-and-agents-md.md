@@ -52,7 +52,7 @@ no MCP config or deferred-tool registry to summarize. Ticket 10 should add a
 whatever non-preloaded MCP tools exist (empty → dropped, same pattern as skills).
 
 **Subagents (ticket 07):** gated on `config.agent.subagents: bool` (added to `AgentConfig`,
-default `false` in `rust/config/default.toml` since the `create_sub_agent` tool doesn't exist yet).
+default `false` in `config/default.toml` since the `create_sub_agent` tool doesn't exist yet).
 The `<sub-agents>` section text in `instructions.rs` (`SUBAGENTS_TEXT`) already describes the
 `create_sub_agent` tool and the five-way parallelism limit for when ticket 07 lands and can flip
 the default (or wire the flag through more precisely, e.g. only true once the tool is registered).

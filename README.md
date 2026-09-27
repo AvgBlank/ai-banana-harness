@@ -3,7 +3,7 @@
 A local-first, terminal-first coding-agent harness: one binary, a ratatui **TUI** and a
 **headless run**, driving DeepSeek or Qwen to resolve a GitHub issue in a local repository.
 
-The code lives in `rust/` (a Cargo workspace). The design is in `.scratch/banana-harness/spec.md`,
+The code is a Cargo workspace at the repository root (`crates/`). The design is in `.scratch/banana-harness/spec.md`,
 the vocabulary in `CONTEXT.md`, and the key decisions in `docs/adr/`.
 
 ## Evaluator quickstart
@@ -32,7 +32,7 @@ build artefacts.
 
 Settings are TOML, layered so each later file wins:
 
-1. the committed default, embedded in the binary (`rust/config/default.toml`)
+1. the committed default, embedded in the binary (`config/default.toml`)
 2. the user config directory (`$XDG_CONFIG_HOME/banana-harness/config.toml`, or the platform
    equivalent)
 3. the workspace's own `.banana-harness/config.toml`
@@ -95,6 +95,6 @@ make test    # offline suite (plus the live smoke when AI_API_KEY is set)
 make lint    # cargo fmt --check, and clippy with warnings denied
 ```
 
-Tests live in each crate's `tests/` folder. `rust/scripts/live_smoke.sh <deepseek|qwen>` runs the
+Tests live in each crate's `tests/` folder. `scripts/live_smoke.sh <deepseek|qwen>` runs the
 live smoke test standalone (needs `AI_API_KEY`); `make test` wires it in automatically when the
 key is present.

@@ -18,12 +18,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: Install the toolchain pinned by rust/rust-toolchain.toml
-        working-directory: rust
+      - name: Install the toolchain pinned by rust-toolchain.toml
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: rust
       - run: make lint
       # Without AI_API_KEY, `make test` runs the offline suite and skips the live smoke.
       - run: make test

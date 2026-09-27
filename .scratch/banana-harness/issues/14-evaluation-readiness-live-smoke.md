@@ -23,13 +23,13 @@
 
 For whoever runs the live smoke test next, and for 15/16.
 
-**Fixture (`rust/fixtures/live-smoke/`):** deliberately not a Cargo project, so `cargo test
+**Fixture (`fixtures/live-smoke/`):** deliberately not a Cargo project, so `cargo test
 --workspace` never touches it and no extra toolchain (Node/Python) is required. `ISSUE.md` is
 the issue text; `src/calc.sh` defines `add()` with an off-by-one bug (`+ $2 - 1`); `tests/
 test_calc.sh` sources it and asserts `add 2 3 == 5`. All three are checked in with the shell
 scripts' executable bit set.
 
-**Live smoke script (`rust/scripts/live_smoke.sh <deepseek|qwen>`):** copies the fixture into a
+**Live smoke script (`scripts/live_smoke.sh <deepseek|qwen>`):** copies the fixture into a
 fresh `mktemp -d`, `git init`s and commits it there (the agent's guardrails/checkpoint code
 expects a git workspace), asserts the copy's test fails *before* the run (a canary against a
 broken fixture), builds and runs `cargo run --release --locked ... -- run --provider <p>

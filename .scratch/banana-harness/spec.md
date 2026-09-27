@@ -150,7 +150,7 @@ There is one week until the deadline, and the implementation is done by AI agent
 ### Shape
 
 - **One binary, two surfaces.** The TUI is the default and the headless run is a subcommand. There's no HTTP API; the agent loop runs in-process.
-- **A Cargo workspace in a `rust/` subfolder**, kept apart from the TypeScript code until cutover. It has seven packages:
+- **A Cargo workspace**, built in a `rust/` subfolder beside the TypeScript code until cutover and moved to the repository root after it. It has seven packages:
   - **llm:** the DeepSeek/Qwen chat client.
   - **tools:** the host tools plus the guardrail engine.
   - **mcp:** the MCP client plus OAuth.
@@ -346,7 +346,7 @@ There is one week until the deadline, and the implementation is done by AI agent
 - **Delete** the TypeScript packages, the Python SDK, the Helm chart, the Docker files, pnpm/TS/lint tooling, changesets, the OpenAPI copies and the TS scripts.
 - **Replace** CI with one Rust workflow on Linux and macOS.
 - **Rewrite** the README and root agent conventions for Rust, and delete the nested TS convention files.
-- The `rust/` folder stays in place through the deadline.
+- After cutover the `rust/` folder moved to the repository root.
 
 ## Testing Decisions
 
@@ -406,7 +406,6 @@ There is one week until the deadline, and the implementation is done by AI agent
 - **Data:** importing existing TrueForge data.
 - **Other providers:** any LLM provider other than DeepSeek and Qwen, provider auto-detection, and Qwen Coding Plan keys.
 - **Agents:** named or multiple agents beyond the single configured agent.
-- **Housekeeping:** moving the `rust/` folder to the repository root.
 
 ## Further Notes
 

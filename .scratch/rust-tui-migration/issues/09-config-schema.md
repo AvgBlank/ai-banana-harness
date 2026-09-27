@@ -19,7 +19,7 @@ The user asked (2026-09-27) for recommended answers, with opencode as the refere
 
 - **Format:** TOML.
 - **Precedence** (later wins):
-  1. `rust/config/default.toml`, committed and embedded in the binary with `include_str!`. This satisfies the brief's "model configuration clearly defined".
+  1. `config/default.toml`, committed and embedded in the binary with `include_str!`. This satisfies the brief's "model configuration clearly defined".
   2. `~/.config/banana-harness/config.toml`
   3. `<workspace>/.banana-harness/config.toml`
 - **Sections:**

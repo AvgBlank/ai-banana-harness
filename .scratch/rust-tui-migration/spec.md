@@ -269,7 +269,7 @@ TS reference: `core/InstructionBuilder.ts`, `core/sandbox/skills/constants.ts`.
 ## 5. Config ([Config schema](issues/09-config-schema.md))
 
 **Files and precedence** (later wins):
-1. the embedded `rust/config/default.toml`
+1. the embedded `config/default.toml`
 2. `~/.config/banana-harness/config.toml`
 3. `<workspace>/.banana-harness/config.toml`
 
@@ -446,10 +446,10 @@ The Makefile sits at the repo root and uses `CARGO ?= $(HOME)/.cargo/bin/cargo`,
 
 | Target | Does |
 |---|---|
-| `setup` | Checks for a C compiler (`cc`). If it's missing, prints the fix (`xcode-select --install` / `apt install build-essential`) and exits 1. If `cargo` is missing, runs `curl … sh.rustup.rs \| sh -s -- -y --profile minimal`. Then `cargo build --release --locked --manifest-path rust/Cargo.toml`. |
-| `run` | `AI_API_KEY=$(AI_API_KEY) WORKSPACE=$(WORKSPACE) rust/target/release/banana-harness` |
-| `test` | `cargo test --workspace --locked`, offline. If `AI_API_KEY` is set, also `scripts/live-smoke.sh`: a headless run on `rust/tests/fixtures/buggy-repo` (one failing test to fix) that asserts the test then passes. |
-| `clean` | `cargo clean --manifest-path rust/Cargo.toml` |
+| `setup` | Checks for a C compiler (`cc`). If it's missing, prints the fix (`xcode-select --install` / `apt install build-essential`) and exits 1. If `cargo` is missing, runs `curl … sh.rustup.rs \| sh -s -- -y --profile minimal`. Then `cargo build --release --locked`. |
+| `run` | `AI_API_KEY=$(AI_API_KEY) WORKSPACE=$(WORKSPACE) target/release/banana-harness` |
+| `test` | `cargo test --workspace --locked`, offline. If `AI_API_KEY` is set, also `scripts/live-smoke.sh`: a headless run on `tests/fixtures/buggy-repo` (one failing test to fix) that asserts the test then passes. |
+| `clean` | `cargo clean` |
 
 Also commit `.env.example` containing just `AI_API_KEY=`.
 
@@ -536,4 +536,4 @@ Every item is sized for one agent session. The "Done when" check in the table ap
 
 **Keep:** `docs/` user docs only where they still apply. Otherwise delete them, so no stale docs are left behind.
 
-`rust/` **stays where it is** through the deadline. Moving it to the root is post-hackathon cleanup.
+`rust/` was later moved to the repository root, after the cutover.

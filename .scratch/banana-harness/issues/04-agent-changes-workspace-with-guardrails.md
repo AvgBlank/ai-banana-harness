@@ -94,7 +94,7 @@ workspace that `external_directory` doesn't allow.
 `Cargo.toml`; `indexmap` was already in the lockfile as toml's optional dep). With it, both
 `toml::from_str` and the merged `toml::Value` in `Config::load` keep tables in document order, and
 `Rules`' custom `Deserialize` (`visit_map`, `:54`) collects entries in the order they arrive. The
-committed denylist therefore lives in `rust/config/default.toml` as ordinary `[permission.bash]`
+committed denylist therefore lives in `config/default.toml` as ordinary `[permission.bash]`
 / `[permission.read]` tables, exactly as spec §5 shows it, not as Rust constants. Overlay
 semantics fall out of the existing `merge_toml`: an overlay that repeats a pattern changes its
 action **in place** (keeping its position); a new pattern is **appended**, so it wins over the

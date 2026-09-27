@@ -22,7 +22,7 @@ Use the dark theme with the banana-yellow accent from the start, in one theme mo
 
 For tickets 03, 08, 09, 13 and later.
 
-**Crate layout** (`rust/crates/harness-tui/src/`):
+**Crate layout** (`crates/harness-tui/src/`):
 - `theme.rs`: the one dark palette + banana-yellow accent (`ACCENT = #FFE135`), as `ratatui::style::Color` constants (`BACKGROUND`, `TEXT`, `MUTED`, `BORDER`, `ACCENT`, `ERROR`) and `Style`-returning helpers (`base`, `border`, `border_focused`, `accent`, `accent_bold`, `muted`, `error`). Colours are truecolor `Rgb`; there's no separate 256-colour table — terminals without truecolor degrade these on their own. Ticket 13 should keep adding to this module rather than hand-rolling styles elsewhere.
 - `app.rs`: pure state, no ratatui/crossterm/terminal I/O. `App { screen: Screen }`, `Screen::Startup(StartupState) | Screen::Main(MainState)`. Constructors: `App::new_startup(selected: Provider, needs_workspace: bool, key_missing: bool)`, `App::new_main(provider, workspace: PathBuf)` (used directly by tests and by the real flow via `App::enter_main`). Accessors `startup_mut()`/`main_mut()` return `Option<&mut _>` for the active screen.
   - `StartupState`: `selected: Provider`, `needs_workspace: bool`, `workspace_input: String`, `key_missing: bool`, `workspace_error: Option<String>`. `toggle_provider()` flips the two-way choice; `ready() -> Option<(Provider, String)>` is `None` while the key is missing or a required workspace field is empty.

@@ -66,7 +66,7 @@ are `{name, input}`, both required and non-empty (`SubAgentRequest::parse`).
 **Prompts:** the child prompt is built once per turn with `SystemPromptInput { root: false,
 subagents_enabled: false, config_instructions: "", agents_md: None, skills }` — identity is
 `SUB_AGENT_IDENTITY`, no `<user-instructions>`, no `<sub-agents>` (it can't spawn), skills and
-workspace sections kept. `rust/config/default.toml` now has `subagents = true`; the flag gates
+workspace sections kept. `config/default.toml` now has `subagents = true`; the flag gates
 both the `<sub-agents>` section and the tool itself. `SUBAGENTS_TEXT` already matched the built
 behaviour (five-way, root-only, final answer as tool result), so it is unchanged; the
 instructions golden and `tool_calls.rs`'s tool-name set were updated for the now-on default.
