@@ -38,7 +38,8 @@ similar = "3.2.0"
 
 # Storage and config
 rusqlite = { version = "0.40.2", features = ["bundled"] }
-toml = "1.1.6"
+# `preserve_order` keeps permission pattern maps in declaration order (last match wins).
+toml = { version = "1.1.6", features = ["preserve_order"] }
 etcetera = "0.11.0"
 
 # Search
@@ -55,6 +56,7 @@ anyhow = "1.0.104"
 thiserror = "2.0.21"
 ulid = "3.0.0"
 clap = { version = "4.6.7", features = ["derive", "env"] }
+libc = "0.2.189"
 
 # Tests
 tempfile = "3.27.0"

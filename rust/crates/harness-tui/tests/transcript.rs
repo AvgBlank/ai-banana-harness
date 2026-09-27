@@ -135,3 +135,102 @@ fn the_status_line_shows_a_spinner_while_a_turn_runs() {
     let view = rendered(&app);
     assert!(view.contains("Ctrl+C to cancel"), "{view}");
 }
+
+fn tool_card(main: &mut harness_tui::app::MainState, name: &str, arguments: &str, content: &str) {
+    main.apply_event(event(EventKind::ToolCall {
+        thread_id: "thread".to_string(),
+        tool_call_id: format!("call_{name}"),
+        name: name.to_string(),
+        arguments: arguments.to_string(),
+    }));
+    main.apply_event(event(EventKind::ToolResponse {
+        thread_id: "thread".to_string(),
+        tool_call_id: format!("call_{name}"),
+        content: content.to_string(),
+        blocked: false,
+    }));
+}
+
+#[test]
+fn an_expanded_edit_card_renders_the_diff() {
+    let mut app = App::new_main(Provider::DeepSeek, std::env::temp_dir());
+    let main = app.main_mut().unwrap();
+    let arguments = serde_json::json!({
+        "path": "src/lib.rs",
+        "old_string": "fn keep() {}\nfn old_name() {}\n",
+        "new_string": "fn keep() {}\nfn new_name() {}\n",
+    })
+    .to_string();
+    tool_card(
+        main,
+        "edit",
+        &arguments,
+        "Edited src/lib.rs: replaced 1 occurrence(s)",
+    );
+
+    let collapsed = rendered(&app);
+    assert!(collapsed.contains("edit"), "{collapsed}");
+    assert!(!collapsed.contains("- fn old_name"), "{collapsed}");
+
+    app.main_mut().unwrap().toggle_last_card();
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    terminal.draw(|frame| ui::draw(frame, &app)).unwrap();
+    let view = terminal.backend().to_string();
+    assert!(view.contains("  fn keep() {}"), "{view}");
+    assert!(view.contains("- fn old_name() {}"), "{view}");
+    assert!(view.contains("+ fn new_name() {}"), "{view}");
+
+    // Removed and added rows carry the diff tints, and the code is syntax-coloured (not all
+    // one foreground colour).
+    let buffer = terminal.backend().buffer();
+    let row_of = |needle: &str| {
+        (0..buffer.area.height)
+            .find(|&y| {
+                let row: String = (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect();
+                row.contains(needle)
+            })
+            .unwrap()
+    };
+    let cells = |y: u16| (0..buffer.area.width).map(move |x| &buffer[(x, y)]);
+    let removed = row_of("- fn old_name");
+    let added = row_of("+ fn new_name");
+    assert!(cells(removed).any(|c| c.bg == harness_tui::theme::DIFF_REMOVED_BG));
+    assert!(cells(added).any(|c| c.bg == harness_tui::theme::DIFF_ADDED_BG));
+    let colours: std::collections::HashSet<_> = cells(added)
+        .filter(|c| c.bg == harness_tui::theme::DIFF_ADDED_BG && c.symbol() != " ")
+        .map(|c| c.fg)
+        .collect();
+    assert!(colours.len() > 2, "{colours:?}");
+
+    // Toggling again collapses it.
+    app.main_mut().unwrap().toggle_last_card();
+    assert!(!rendered(&app).contains("+ fn new_name"));
+}
+
+#[test]
+fn an_expanded_bash_card_shows_the_last_40_lines_and_the_exit_code() {
+    let mut app = App::new_main(Provider::DeepSeek, std::env::temp_dir());
+    let main = app.main_mut().unwrap();
+    let output: String = (1..=45).map(|i| format!("line {i}\n")).collect();
+    tool_card(
+        main,
+        "bash",
+        r#"{"command":"cargo test"}"#,
+        &format!("exit code: 101\n{output}"),
+    );
+    main.toggle_last_card();
+
+    // Tall enough to show the whole expanded card.
+    let mut terminal = Terminal::new(TestBackend::new(80, 60)).unwrap();
+    terminal.draw(|frame| ui::draw(frame, &app)).unwrap();
+    let view = terminal.backend().to_string();
+    assert!(view.contains("$ cargo test"), "{view}");
+    assert!(view.contains("… 5 earlier lines"), "{view}");
+    // Body lines are indented under the card; the collapsed header's preview is not.
+    assert!(!view.contains("│    line 5 "), "{view}");
+    assert!(view.contains("│    line 6 "), "{view}");
+    assert!(view.contains("line 45"), "{view}");
+    assert!(view.contains("exit code: 101"), "{view}");
+}

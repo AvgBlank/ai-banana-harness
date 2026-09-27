@@ -1,8 +1,7 @@
-use std::path::Path;
-
 use serde_json::Value;
 
-use crate::ToolResult;
+use crate::guardrail::Key;
+use crate::{ToolContext, ToolResult};
 
 pub const DESCRIPTION: &str = "Find files in the workspace whose path matches a glob pattern (e.g. `**/*.rs`). \
 Respects .gitignore.";
@@ -17,10 +16,14 @@ pub fn parameters() -> Value {
     })
 }
 
-pub fn call(workspace: &Path, arguments: &Value) -> ToolResult {
+pub fn call(ctx: &ToolContext<'_>, arguments: &Value) -> ToolResult {
     let Some(pattern) = arguments.get("pattern").and_then(Value::as_str) else {
         return ToolResult::error("glob requires a string \"pattern\" argument");
     };
+    if let Err(rule) = ctx.permission.check(Key::Glob, pattern) {
+        return ToolResult::blocked(&rule);
+    }
+    let workspace = ctx.workspace;
     let matcher = match globset::Glob::new(pattern) {
         Ok(glob) => glob.compile_matcher(),
         Err(e) => return ToolResult::error(format!("invalid glob pattern: {e}")),

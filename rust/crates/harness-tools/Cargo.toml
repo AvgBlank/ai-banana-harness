@@ -7,11 +7,13 @@ publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 ignore.workspace = true
 globset.workspace = true
 grep-searcher.workspace = true
 grep-regex.workspace = true
+libc.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

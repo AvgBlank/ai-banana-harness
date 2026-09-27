@@ -71,6 +71,14 @@ pub struct ToolCallItem {
     pub name: String,
     pub arguments: String,
     pub outcome: Option<ToolOutcome>,
+    /// Edit/write cards expand to a diff, bash cards to the output's tail.
+    pub expanded: bool,
+}
+
+impl ToolCallItem {
+    pub fn expandable(&self) -> bool {
+        matches!(self.name.as_str(), "edit" | "write_file" | "bash")
+    }
 }
 
 pub struct ToolOutcome {
@@ -268,6 +276,7 @@ impl MainState {
                     name,
                     arguments,
                     outcome: None,
+                    expanded: false,
                 }));
             }
             EventKind::ToolResponse {
@@ -280,6 +289,21 @@ impl MainState {
                     call.outcome = Some(ToolOutcome { content, blocked });
                 }
             }
+        }
+    }
+
+    /// Enter (on empty input) or Ctrl+O: expands or collapses the most recent expandable card.
+    pub fn toggle_last_card(&mut self) {
+        let card = self
+            .transcript
+            .iter_mut()
+            .rev()
+            .find_map(|item| match item {
+                TranscriptItem::Tool(call) if call.expandable() => Some(call),
+                _ => None,
+            });
+        if let Some(call) = card {
+            call.expanded = !call.expanded;
         }
     }
 

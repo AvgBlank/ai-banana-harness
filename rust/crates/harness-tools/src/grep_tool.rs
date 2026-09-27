@@ -1,12 +1,10 @@
-use std::path::Path;
-
 use grep_regex::RegexMatcher;
 use grep_searcher::Searcher;
 use grep_searcher::sinks::UTF8;
 use serde_json::Value;
 
-use crate::ToolResult;
-use crate::guardrail;
+use crate::guardrail::Key;
+use crate::{ToolContext, ToolResult};
 
 pub const DESCRIPTION: &str = "Search file contents in the workspace for a regular expression. Optionally scoped to a \
 `path` and filtered to files matching a `glob`. Respects .gitignore.";
@@ -23,18 +21,23 @@ pub fn parameters() -> Value {
     })
 }
 
-pub fn call(workspace: &Path, arguments: &Value) -> ToolResult {
+pub fn call(ctx: &ToolContext<'_>, arguments: &Value) -> ToolResult {
     let Some(pattern) = arguments.get("pattern").and_then(Value::as_str) else {
         return ToolResult::error("grep requires a string \"pattern\" argument");
     };
+    if let Err(rule) = ctx.permission.check(Key::Grep, pattern) {
+        return ToolResult::blocked(&rule);
+    }
+    let workspace = ctx.workspace;
     let matcher = match RegexMatcher::new(pattern) {
         Ok(m) => m,
         Err(e) => return ToolResult::error(format!("invalid pattern: {e}")),
     };
     let base = match arguments.get("path").and_then(Value::as_str) {
-        Some(path) => match guardrail::confine(workspace, Path::new(path)) {
+        // Searching a path reads it, so the `read` rules (and confinement) decide.
+        Some(path) => match ctx.path(Key::Read, path) {
             Ok(resolved) => resolved,
-            Err(rule) => return ToolResult::blocked(&rule),
+            Err(blocked) => return blocked,
         },
         None => workspace.to_path_buf(),
     };
@@ -59,6 +62,10 @@ pub fn call(workspace: &Path, arguments: &Value) -> ToolResult {
             continue;
         }
         let display = relative.display().to_string();
+        // Files the `read` rules deny (e.g. `.env`) are skipped rather than leaked through grep.
+        if ctx.permission.check(Key::Read, &display).is_err() {
+            continue;
+        }
         // A binary or unreadable file just yields no hits; grep keeps going over the rest.
         let _ = Searcher::new().search_path(
             &matcher,

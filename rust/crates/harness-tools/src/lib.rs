@@ -1,35 +1,81 @@
-//! Host tools the agent can call: `read_file`, `glob` and `grep`, each confined to the
-//! workspace by the [`guardrail`] module. Ticket 04 adds `write_file`, `edit` and `bash`
-//! alongside these; ticket 10 adds MCP tools. Per the spec, dispatch across all tool sources is
-//! by enumeration, not trait objects — [`HostTool`] is that enumeration for this crate.
+//! Host tools the agent can call: `read_file`, `write_file`, `edit`, `glob`, `grep` and `bash`,
+//! each gated by the [`guardrail`] permission engine. Ticket 10 adds MCP tools. Per the spec,
+//! dispatch across all tool sources is by enumeration, not trait objects — [`HostTool`] is that
+//! enumeration for this crate.
 
+mod bash;
+mod edit;
 mod glob_tool;
 mod grep_tool;
 mod guardrail;
 pub mod pattern;
 mod read_file;
+mod write_file;
 
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use serde::Deserialize;
 use serde_json::Value;
+
+pub use guardrail::{Action, PermissionConfig, Rules};
+
+/// The `[tools]` config section.
+#[derive(Clone, Debug, Deserialize)]
+pub struct ToolsConfig {
+    /// `bash`'s timeout when a call doesn't set one; clamped to 600 either way.
+    pub bash_timeout_secs: u64,
+    /// `bash`'s output cap; the middle of longer output is dropped.
+    pub output_max_bytes: usize,
+}
+
+/// What every tool call runs against.
+pub struct ToolContext<'a> {
+    pub workspace: &'a Path,
+    pub tools: &'a ToolsConfig,
+    pub permission: &'a PermissionConfig,
+    /// Environment variables removed from `bash` subprocesses, e.g. the provider key.
+    pub hidden_env: &'a [&'a str],
+}
+
+impl ToolContext<'_> {
+    /// A path argument resolved and permitted for `key`, or the blocked result to return.
+    fn path(&self, key: guardrail::Key, requested: &str) -> Result<PathBuf, ToolResult> {
+        self.permission
+            .path(self.workspace, key, Path::new(requested))
+            .map_err(|rule| ToolResult::blocked(&rule))
+    }
+}
 
 /// One of the fixed host tools. Dispatch is a `match` in [`HostTool::call`], not a trait object.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HostTool {
     ReadFile,
+    WriteFile,
+    Edit,
     Glob,
     Grep,
+    Bash,
 }
 
 impl HostTool {
-    pub const ALL: [HostTool; 3] = [HostTool::ReadFile, HostTool::Glob, HostTool::Grep];
+    pub const ALL: [HostTool; 6] = [
+        HostTool::ReadFile,
+        HostTool::WriteFile,
+        HostTool::Edit,
+        HostTool::Glob,
+        HostTool::Grep,
+        HostTool::Bash,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
             HostTool::ReadFile => "read_file",
+            HostTool::WriteFile => "write_file",
+            HostTool::Edit => "edit",
             HostTool::Glob => "glob",
             HostTool::Grep => "grep",
+            HostTool::Bash => "bash",
         }
     }
 
@@ -40,8 +86,11 @@ impl HostTool {
     pub fn description(self) -> &'static str {
         match self {
             HostTool::ReadFile => read_file::DESCRIPTION,
+            HostTool::WriteFile => write_file::DESCRIPTION,
+            HostTool::Edit => edit::DESCRIPTION,
             HostTool::Glob => glob_tool::DESCRIPTION,
             HostTool::Grep => grep_tool::DESCRIPTION,
+            HostTool::Bash => bash::DESCRIPTION,
         }
     }
 
@@ -50,16 +99,22 @@ impl HostTool {
     pub fn parameters(self) -> Value {
         match self {
             HostTool::ReadFile => read_file::parameters(),
+            HostTool::WriteFile => write_file::parameters(),
+            HostTool::Edit => edit::parameters(),
             HostTool::Glob => glob_tool::parameters(),
             HostTool::Grep => grep_tool::parameters(),
+            HostTool::Bash => bash::parameters(),
         }
     }
 
-    pub fn call(self, workspace: &Path, arguments: &Value) -> ToolResult {
+    pub fn call(self, ctx: &ToolContext<'_>, arguments: &Value) -> ToolResult {
         match self {
-            HostTool::ReadFile => read_file::call(workspace, arguments),
-            HostTool::Glob => glob_tool::call(workspace, arguments),
-            HostTool::Grep => grep_tool::call(workspace, arguments),
+            HostTool::ReadFile => read_file::call(ctx, arguments),
+            HostTool::WriteFile => write_file::call(ctx, arguments),
+            HostTool::Edit => edit::call(ctx, arguments),
+            HostTool::Glob => glob_tool::call(ctx, arguments),
+            HostTool::Grep => grep_tool::call(ctx, arguments),
+            HostTool::Bash => bash::call(ctx, arguments),
         }
     }
 }
@@ -101,12 +156,12 @@ impl ToolResult {
 /// Looks a tool up by (possibly sanitised) name and runs it, or reports it as unknown. The one
 /// entry point a caller needs; it owns the closed-set dispatch so callers never match on
 /// [`HostTool`] themselves.
-pub fn call_by_name(workspace: &Path, name: &str, arguments_json: &str) -> ToolResult {
+pub fn call_by_name(ctx: &ToolContext<'_>, name: &str, arguments_json: &str) -> ToolResult {
     let Some(tool) = HostTool::from_name(name) else {
         return ToolResult::error(format!("unknown tool \"{name}\""));
     };
     let arguments: Value = serde_json::from_str(arguments_json).unwrap_or(Value::Null);
-    tool.call(workspace, &arguments)
+    tool.call(ctx, &arguments)
 }
 
 /// A tool definition ready for the wire: a sanitised name and a schema reduced to

@@ -303,7 +303,11 @@ fn interpret_key(app: &mut App, key: KeyEvent) -> Action {
                 }
                 KeyCode::Enter => {
                     let text = state.input.trim().to_string();
-                    if text.is_empty() || state.turn_running {
+                    if text.is_empty() {
+                        state.toggle_last_card();
+                        return Action::None;
+                    }
+                    if state.turn_running {
                         return Action::None;
                     }
                     state.input.clear();
@@ -318,6 +322,7 @@ fn interpret_key(app: &mut App, key: KeyEvent) -> Action {
                 KeyCode::Backspace => {
                     state.input.pop();
                 }
+                KeyCode::Char('o') if ctrl => state.toggle_last_card(),
                 KeyCode::Char(c) if !ctrl => state.input.push(c),
                 _ => {}
             }

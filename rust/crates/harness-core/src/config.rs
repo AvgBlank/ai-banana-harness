@@ -12,6 +12,8 @@ pub struct Config {
     pub providers: Providers,
     pub agent: AgentConfig,
     pub skills: SkillsConfig,
+    pub tools: harness_tools::ToolsConfig,
+    pub permission: harness_tools::PermissionConfig,
 }
 
 #[derive(Clone, Debug, Deserialize)]
