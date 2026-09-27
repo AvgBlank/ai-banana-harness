@@ -17,6 +17,11 @@ run:
 
 test:
 	cd rust && $(CARGO) test --workspace --locked
+	@if [ -n "$$AI_API_KEY" ]; then \
+	  rust/scripts/live_smoke.sh deepseek && rust/scripts/live_smoke.sh qwen; \
+	else \
+	  echo "AI_API_KEY not set; skipping the live smoke test."; \
+	fi
 
 lint:
 	cd rust && $(CARGO) fmt --check
