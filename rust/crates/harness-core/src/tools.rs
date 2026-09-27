@@ -12,11 +12,14 @@ use harness_tools::{
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
-use crate::mcp::{McpRegistry, McpTarget};
+use crate::mcp::{McpAuthNotifier, McpRegistry, McpTarget};
 
 pub(crate) struct ToolInvocation<'a> {
     pub name: &'a str,
     pub arguments_json: &'a str,
+    /// Where a remote MCP server's OAuth login URL is reported the moment it starts. Owned
+    /// (not borrowed) so a call can move into its own `tokio::spawn`ed task.
+    pub mcp_auth: McpAuthNotifier,
 }
 
 /// Where a tool call goes. Closed set, dispatched by `match`.
@@ -117,6 +120,7 @@ impl TurnTools {
         tools_config: ToolsConfig,
         permission: PermissionConfig,
         builtin_definitions: &[ToolDefinition],
+        mcp_auth: McpAuthNotifier,
     ) -> Self {
         let mut definitions = Vec::new();
         let mut routes = HashMap::new();
@@ -144,7 +148,7 @@ impl TurnTools {
         for builtin in builtin_definitions {
             used.insert(builtin.name.clone());
         }
-        for (server, tool) in mcp.preloaded_tools().await {
+        for (server, tool) in mcp.preloaded_tools(&mcp_auth).await {
             let name = sanitize_name(&tool.name, &mut used);
             definitions.push(ToolDefinition {
                 name: name.clone(),
@@ -173,6 +177,7 @@ impl TurnTools {
         let ToolInvocation {
             name,
             arguments_json,
+            mcp_auth,
         } = invocation;
         match self.routes.get(name) {
             // An unknown name goes to the host tools, which report it as unknown.
@@ -206,7 +211,9 @@ impl TurnTools {
             Some(ToolSource::Mcp { server, tool }) => {
                 // Bad or empty JSON becomes `{}`, and the server validates what it gets.
                 let arguments = serde_json::from_str(arguments_json).unwrap_or_default();
-                self.mcp.call(McpTarget { server, tool }, arguments).await
+                self.mcp
+                    .call(McpTarget { server, tool }, arguments, &mcp_auth)
+                    .await
             }
             Some(ToolSource::Deferred(meta)) => {
                 let args: MetaArgs = match serde_json::from_str(arguments_json) {
@@ -214,13 +221,16 @@ impl TurnTools {
                     Err(e) => return ToolResult::error(format!("invalid arguments: {e}")),
                 };
                 match meta {
-                    MetaTool::ListTools => self.mcp.list_tools(&args.mcp_server).await,
+                    MetaTool::ListTools => self.mcp.list_tools(&args.mcp_server, &mcp_auth).await,
                     MetaTool::GetToolInfo => {
                         self.mcp
-                            .tool_info(McpTarget {
-                                server: &args.mcp_server,
-                                tool: &args.tool_name,
-                            })
+                            .tool_info(
+                                McpTarget {
+                                    server: &args.mcp_server,
+                                    tool: &args.tool_name,
+                                },
+                                &mcp_auth,
+                            )
                             .await
                     }
                     MetaTool::CallTool => {
@@ -231,6 +241,7 @@ impl TurnTools {
                                     tool: &args.tool_name,
                                 },
                                 args.input,
+                                &mcp_auth,
                             )
                             .await
                     }

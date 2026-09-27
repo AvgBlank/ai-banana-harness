@@ -21,6 +21,10 @@ ulid.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# Only to build a `StoredCredentials` fixture for the persisted-OAuth-token test; harness-core
+# never depends on rmcp's types outside tests (harness-mcp owns that boundary).
+rmcp.workspace = true
+oauth2.workspace = true
 
 [lints]
 workspace = true

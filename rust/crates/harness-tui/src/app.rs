@@ -91,6 +91,8 @@ pub enum Overlay {
     },
     /// `/help`: commands and key bindings.
     Help,
+    /// A remote MCP server needs a browser OAuth login.
+    McpAuth { server: String, url: String },
 }
 
 pub enum TranscriptItem {
@@ -398,6 +400,9 @@ impl MainState {
                     card.status = error.map_or(SubagentStatus::Done, SubagentStatus::Error);
                 }
             }
+            EventKind::McpAuthRequired { server, url, .. } => {
+                self.overlay = Some(Overlay::McpAuth { server, url });
+            }
             kind => {
                 let thread_id = kind.thread_id().unwrap_or_default().to_string();
                 if let EventKind::ModelMessage {
@@ -543,7 +548,8 @@ fn apply_thread_event(items: &mut Vec<TranscriptItem>, kind: EventKind) {
         EventKind::TurnCreated { .. }
         | EventKind::TurnDone { .. }
         | EventKind::ThreadCreated { .. }
-        | EventKind::ThreadDone { .. } => {}
+        | EventKind::ThreadDone { .. }
+        | EventKind::McpAuthRequired { .. } => {}
     }
 }
 

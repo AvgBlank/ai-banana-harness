@@ -21,7 +21,7 @@ use crate::compaction;
 use crate::config::{Config, Provider};
 use crate::event::{Event, EventKind, ModelOutput, TurnState};
 use crate::instructions::{SystemPromptInput, system_prompt};
-use crate::mcp::{McpRegistry, McpServerStatus};
+use crate::mcp::{McpAuthNotifier, McpRegistry, McpServerStatus};
 use crate::skills::load_skills;
 use crate::tools::{ToolInvocation, TurnTools};
 
@@ -47,7 +47,7 @@ pub struct Harness {
 }
 
 struct Inner {
-    store: Store,
+    store: Arc<Store>,
     config: Config,
     /// The provider a brand-new session starts with; each turn afterwards reads the session's
     /// own `provider` column, which `/provider` can change independently.
@@ -84,15 +84,17 @@ impl Harness {
             temperature: provider_config.temperature,
             seed: provider_config.seed,
         })?;
+        let store = Arc::new(options.store);
         let mcp = McpRegistry::new(
             &options.config.mcp,
             options.config.permission.clone(),
             options.workspace.clone(),
+            Arc::new(StoreOAuthTokens(Arc::clone(&store))),
         );
         Ok(Self {
             inner: Arc::new(Inner {
                 mcp: Arc::new(mcp),
-                store: options.store,
+                store,
                 config: options.config,
                 provider: options.provider,
                 api_key: options.api_key.clone(),
@@ -292,13 +294,14 @@ impl TurnRunner {
         let tools = tokio::select! {
             biased;
             () = self.cancel.cancelled() => return Ok(TurnState::Cancelled),
-            tools = TurnTools::build(
+            tools = self.with_mcp_auth_watch(&thread_id, |notifier| TurnTools::build(
                 Arc::clone(&inner.mcp),
                 inner.workspace.clone(),
                 inner.config.tools.clone(),
                 inner.config.permission.clone(),
                 &builtin_definitions,
-            ) => {
+                notifier,
+            )) => {
                 Arc::new(tools)
             }
         };
@@ -465,7 +468,9 @@ impl TurnRunner {
                 .await?;
             }
             let results = self
-                .run_tool_calls(shared, thread, &completion.tool_calls)
+                .with_mcp_auth_watch(&thread.id, |notifier| {
+                    self.run_tool_calls(shared, thread, &completion.tool_calls, notifier)
+                })
                 .await?;
             if self.cancel.is_cancelled() {
                 return Ok(ThreadEnd::Cancelled);
@@ -522,6 +527,7 @@ impl TurnRunner {
         shared: &Arc<TurnShared>,
         thread: &ThreadInfo,
         calls: &[ToolCallResult],
+        mcp_auth: McpAuthNotifier,
     ) -> Result<Vec<ToolResult>> {
         let mut results: Vec<Option<ToolResult>> = vec![None; calls.len()];
         let mut other = Vec::new();
@@ -535,6 +541,7 @@ impl TurnRunner {
                 None => {
                     let tools = Arc::clone(&shared.tools);
                     let call = call.clone();
+                    let mcp_auth = mcp_auth.clone();
                     other.push((
                         index,
                         tokio::spawn(async move {
@@ -542,6 +549,7 @@ impl TurnRunner {
                                 .call(ToolInvocation {
                                     name: &call.name,
                                     arguments_json: &call.arguments,
+                                    mcp_auth,
                                 })
                                 .await
                         }),
@@ -709,6 +717,33 @@ impl TurnRunner {
         // A consumer that stopped listening doesn't stop the turn; it still runs to completion.
         let _ = self.tx.send(Event { id: new_id(), kind }).await;
     }
+
+    /// Runs `work`, streaming `mcp.auth_required` for every OAuth login URL it reports while it
+    /// runs (an OAuth login can take a while — the TUI needs the URL well before `work` finishes,
+    /// not after).
+    async fn with_mcp_auth_watch<T, F, Fut>(&self, thread_id: &str, work: F) -> T
+    where
+        F: FnOnce(McpAuthNotifier) -> Fut,
+        Fut: Future<Output = T>,
+    {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let watcher_self = self.clone();
+        let watcher_thread_id = thread_id.to_string();
+        let watcher = tokio::spawn(async move {
+            while let Some((server, url)) = rx.recv().await {
+                let _ = watcher_self
+                    .emit(EventKind::McpAuthRequired {
+                        thread_id: watcher_thread_id.clone(),
+                        server,
+                        url,
+                    })
+                    .await;
+            }
+        });
+        let result = work(tx).await;
+        let _ = watcher.await;
+        result
+    }
 }
 
 /// What every thread of one turn shares.
@@ -753,6 +788,25 @@ fn text_message(role: Role, content: String) -> Message {
         content,
         tool_calls: Vec::new(),
         tool_call_id: None,
+    }
+}
+
+/// Backs `harness_mcp::OAuthTokenStore` with the harness's own database, so a remote MCP
+/// server's OAuth token survives restarts. A local wrapper because neither `harness-mcp` nor
+/// `harness-store` may depend on the other.
+struct StoreOAuthTokens(Arc<Store>);
+
+impl harness_mcp::OAuthTokenStore for StoreOAuthTokens {
+    fn load(&self, server: &str) -> Result<Option<String>> {
+        self.0.get_mcp_oauth_token(server)
+    }
+
+    fn save(&self, server: &str, credentials_json: &str) -> Result<()> {
+        self.0.set_mcp_oauth_token(server, credentials_json)
+    }
+
+    fn clear(&self, server: &str) -> Result<()> {
+        self.0.clear_mcp_oauth_token(server)
     }
 }
 

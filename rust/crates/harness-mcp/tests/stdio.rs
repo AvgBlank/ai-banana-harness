@@ -41,7 +41,9 @@ fn args(value: serde_json::Value) -> Map<String, serde_json::Value> {
 #[tokio::test]
 async fn lists_every_page_and_renders_call_results() {
     let dir = tempfile::tempdir().unwrap();
-    let client = McpClient::connect(&config(&[]), dir.path()).await.unwrap();
+    let client = McpClient::connect(&config(&[]), dir.path(), None)
+        .await
+        .unwrap();
 
     let names: Vec<_> = client
         .list_tools()
@@ -93,7 +95,7 @@ async fn lists_every_page_and_renders_call_results() {
 #[tokio::test]
 async fn a_repeated_cursor_ends_the_listing() {
     let dir = tempfile::tempdir().unwrap();
-    let client = McpClient::connect(&config(&[("FIXTURE_REPEAT_CURSOR", "1")]), dir.path())
+    let client = McpClient::connect(&config(&[("FIXTURE_REPEAT_CURSOR", "1")]), dir.path(), None)
         .await
         .unwrap();
     // First page, then the page for "again", whose cursor is "again" once more: stop there.
@@ -107,6 +109,7 @@ async fn env_values_expand_env_references() {
     let client = McpClient::connect(
         &config(&[("GREETING", "hi from {env:CARGO_PKG_NAME}")]),
         dir.path(),
+        None,
     )
     .await
     .unwrap();
@@ -117,7 +120,7 @@ async fn env_values_expand_env_references() {
     assert_eq!(outcome.content, "hi from harness-mcp");
 
     let missing = config(&[("X", "{env:BANANA_HARNESS_SURELY_UNSET}")]);
-    let error = McpClient::connect(&missing, dir.path())
+    let error = McpClient::connect(&missing, dir.path(), None)
         .await
         .err()
         .unwrap();

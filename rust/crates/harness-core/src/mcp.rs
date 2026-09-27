@@ -6,10 +6,16 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, anyhow};
-use harness_mcp::{McpClient, McpServerConfig, McpTool};
+use harness_mcp::{
+    McpClient, McpServerConfig, McpTool, McpTransport, OAuthContext, OAuthTokenStore,
+};
 use harness_tools::{PermissionConfig, ToolResult};
 use serde_json::{Map, Value};
-use tokio::sync::OnceCell;
+use tokio::sync::{OnceCell, mpsc};
+
+/// Reports `(server, login_url)` the moment a fresh OAuth browser flow starts, so the caller can
+/// stream `mcp.auth_required` while the connection is still in progress.
+pub(crate) type McpAuthNotifier = mpsc::UnboundedSender<(String, String)>;
 
 /// A server's connection state, for the TUI's status line.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -38,6 +44,7 @@ pub(crate) struct McpRegistry {
     servers: BTreeMap<String, Server>,
     permission: PermissionConfig,
     workspace: PathBuf,
+    oauth_tokens: Arc<dyn OAuthTokenStore>,
 }
 
 struct Server {
@@ -57,6 +64,7 @@ impl McpRegistry {
         servers: &BTreeMap<String, McpServerConfig>,
         permission: PermissionConfig,
         workspace: PathBuf,
+        oauth_tokens: Arc<dyn OAuthTokenStore>,
     ) -> Self {
         let servers = servers
             .iter()
@@ -73,6 +81,7 @@ impl McpRegistry {
             servers,
             permission,
             workspace,
+            oauth_tokens,
         }
     }
 
@@ -108,13 +117,16 @@ impl McpRegistry {
 
     /// Connects every preload server and returns its tools, sorted by server then tool name. A
     /// server that fails to start is skipped with a warning rather than failing the turn.
-    pub(crate) async fn preloaded_tools(&self) -> Vec<(String, McpTool)> {
+    pub(crate) async fn preloaded_tools(
+        &self,
+        notifier: &McpAuthNotifier,
+    ) -> Vec<(String, McpTool)> {
         let mut tools = Vec::new();
         for (name, server) in &self.servers {
             if !server.config.preload {
                 continue;
             }
-            match self.connection(name).await {
+            match self.connection(name, notifier).await {
                 Ok(connection) => {
                     let mut server_tools = connection.tools.clone();
                     server_tools.sort_by(|a, b| a.name.cmp(&b.name));
@@ -127,8 +139,8 @@ impl McpRegistry {
     }
 
     /// Tool names only, as `list_tools` returns them.
-    pub(crate) async fn list_tools(&self, server: &str) -> ToolResult {
-        match self.connection(server).await {
+    pub(crate) async fn list_tools(&self, server: &str, notifier: &McpAuthNotifier) -> ToolResult {
+        match self.connection(server, notifier).await {
             Ok(connection) => {
                 let names: Vec<_> = connection.tools.iter().map(|t| t.name.as_str()).collect();
                 ToolResult::ok(format!("{server}:\n  {}", names.join(", ")))
@@ -138,8 +150,12 @@ impl McpRegistry {
     }
 
     /// A tool's description and input schema, as `get_tool_info` returns them.
-    pub(crate) async fn tool_info(&self, target: McpTarget<'_>) -> ToolResult {
-        let connection = match self.connection(target.server).await {
+    pub(crate) async fn tool_info(
+        &self,
+        target: McpTarget<'_>,
+        notifier: &McpAuthNotifier,
+    ) -> ToolResult {
+        let connection = match self.connection(target.server, notifier).await {
             Ok(connection) => connection,
             Err(e) => return ToolResult::error(format!("{e:#}")),
         };
@@ -164,11 +180,12 @@ impl McpRegistry {
         &self,
         target: McpTarget<'_>,
         arguments: Map<String, Value>,
+        notifier: &McpAuthNotifier,
     ) -> ToolResult {
         if let Err(rule) = self.permission.check_mcp(target.tool) {
             return ToolResult::blocked(&rule);
         }
-        let connection = match self.connection(target.server).await {
+        let connection = match self.connection(target.server, notifier).await {
             Ok(connection) => connection,
             Err(e) => return ToolResult::error(format!("{e:#}")),
         };
@@ -179,15 +196,30 @@ impl McpRegistry {
         }
     }
 
-    async fn connection(&self, name: &str) -> Result<Arc<Connection>> {
+    async fn connection(&self, name: &str, notifier: &McpAuthNotifier) -> Result<Arc<Connection>> {
         let server = self
             .servers
             .get(name)
             .ok_or_else(|| anyhow!("MCP server '{name}' not found"))?;
+        let needs_oauth = matches!(
+            server.config.transport,
+            McpTransport::Remote { oauth: true, .. }
+        );
+        let oauth = needs_oauth.then(|| {
+            let notifier = notifier.clone();
+            let server_name = name.to_string();
+            OAuthContext {
+                server_name: name,
+                token_store: Arc::clone(&self.oauth_tokens),
+                on_auth_url: Box::new(move |url: &str| {
+                    let _ = notifier.send((server_name.clone(), url.to_string()));
+                }),
+            }
+        });
         let result = server
             .connection
             .get_or_try_init(|| async {
-                let client = McpClient::connect(&server.config, &self.workspace).await?;
+                let client = McpClient::connect(&server.config, &self.workspace, oauth).await?;
                 let tools = client.list_tools().await?;
                 Ok::<_, anyhow::Error>(Arc::new(Connection { client, tools }))
             })

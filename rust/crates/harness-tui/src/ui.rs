@@ -154,7 +154,40 @@ fn draw_overlay(frame: &mut Frame, overlay: &Overlay) {
     match overlay {
         Overlay::Sessions { sessions, selected } => draw_sessions(frame, sessions, *selected),
         Overlay::Help => draw_help(frame),
+        Overlay::McpAuth { server, url } => draw_mcp_auth(frame, server, url),
     }
+}
+
+fn draw_mcp_auth(frame: &mut Frame, server: &str, url: &str) {
+    let lines = vec![
+        Line::from(format!("`{server}` needs a browser login. Open:")),
+        Line::from(""),
+        Line::from(url.to_string()).style(theme::accent()),
+        Line::from(""),
+        Line::from("Esc close").style(theme::muted()),
+    ];
+
+    let height = u16::try_from(lines.len())
+        .unwrap_or(u16::MAX)
+        .saturating_add(4);
+    let [area] = Layout::vertical([Constraint::Length(height)])
+        .flex(Flex::Center)
+        .areas(frame.area());
+    let [area] = Layout::horizontal([Constraint::Length(64)])
+        .flex(Flex::Center)
+        .areas(area);
+    frame.render_widget(Clear, area);
+    let block = Block::bordered()
+        .title(" MCP login required ")
+        .border_style(theme::border_focused())
+        .padding(Padding::uniform(1))
+        .style(theme::base());
+    frame.render_widget(
+        Paragraph::new(Text::from(lines))
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        area,
+    );
 }
 
 fn draw_help(frame: &mut Frame) {
