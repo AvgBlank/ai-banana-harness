@@ -55,9 +55,13 @@ fn draw_startup(frame: &mut Frame, state: &StartupState) {
     if state.needs_workspace {
         lines.push(Line::from("Workspace:").style(theme::muted()));
         lines.push(Line::from(format!("  {}_", state.workspace_input)));
-        if let Some(error) = &state.workspace_error {
-            lines.push(Line::from(error.as_str()).style(theme::error()));
-        }
+    }
+    // Shown even when WORKSPACE came from the environment: that path can still fail to
+    // canonicalize (missing, wrong cwd, etc.), and Enter must not silently no-op then.
+    if let Some(error) = &state.workspace_error {
+        lines.push(Line::from(error.as_str()).style(theme::error()));
+    }
+    if state.needs_workspace {
         lines.push(Line::from(""));
     }
     lines.push(Line::from("↑/↓ choose · Enter confirm · q quit").style(theme::muted()));

@@ -50,3 +50,14 @@ fn an_unset_workspace_adds_a_path_field_to_the_popup() {
 
     assert!(view.contains("Workspace"), "{view}");
 }
+
+#[test]
+fn a_workspace_error_shows_even_when_the_path_came_from_the_environment() {
+    // WORKSPACE was already set (needs_workspace: false), so there's no path field to show
+    // the error next to — but a bad path must still be reported, not silently swallowed.
+    let mut app = App::new_startup(Provider::DeepSeek, false, false);
+    app.startup_mut().unwrap().workspace_error = Some("workspace /nope not found".to_string());
+    let view = rendered(&app);
+
+    assert!(view.contains("workspace /nope not found"), "{view}");
+}
