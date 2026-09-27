@@ -34,8 +34,10 @@ pub fn call(ctx: &ToolContext<'_>, arguments: &Value) -> ToolResult {
     let Some(command) = arguments.get("command").and_then(Value::as_str) else {
         return ToolResult::error("bash requires a string \"command\" argument");
     };
-    if let Err(rule) = ctx.permission.check_command(command) {
-        return ToolResult::blocked(&rule);
+    if let Err(result) =
+        crate::map_verdict(ctx.permission.check_command(command, ctx.ask_overrides))
+    {
+        return result;
     }
     let timeout_secs = arguments
         .get("timeout_secs")

@@ -20,8 +20,10 @@ pub fn call(ctx: &ToolContext<'_>, arguments: &Value) -> ToolResult {
     let Some(pattern) = arguments.get("pattern").and_then(Value::as_str) else {
         return ToolResult::error("glob requires a string \"pattern\" argument");
     };
-    if let Err(rule) = ctx.permission.check(Key::Glob, pattern) {
-        return ToolResult::blocked(&rule);
+    if let Err(result) =
+        crate::map_verdict(ctx.permission.check(Key::Glob, pattern, ctx.ask_overrides))
+    {
+        return result;
     }
     let workspace = ctx.workspace;
     let matcher = match globset::Glob::new(pattern) {

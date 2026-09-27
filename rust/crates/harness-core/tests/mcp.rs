@@ -162,7 +162,8 @@ async fn a_preloaded_tool_is_called_directly_and_returns_its_result() {
             "fail",
             "read_file1",
             "structured",
-            "create_sub_agent"
+            "create_sub_agent",
+            "ask_question"
         ]
     );
     let echo = &body["tools"][7]["function"];
@@ -211,7 +212,8 @@ async fn a_deferred_server_starts_only_when_a_deferred_call_targets_it() {
             "list_tools",
             "get_tool_info",
             "call_tool",
-            "create_sub_agent"
+            "create_sub_agent",
+            "ask_question"
         ]
     );
     let prompt = body["messages"][0]["content"].as_str().unwrap();

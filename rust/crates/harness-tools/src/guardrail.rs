@@ -1,13 +1,58 @@
 //! The permission engine: `allow`, `ask` or `deny` per tool key, each key a list of glob
 //! patterns where the last match wins, plus workspace confinement for every path a tool touches.
 
+use std::collections::HashSet;
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Mutex;
 
 use serde::Deserialize;
 use serde::de::{self, Deserializer, IntoDeserializer, MapAccess, Visitor};
 
 use crate::pattern::last_match;
+
+/// An `ask` rule that matched, identified precisely enough to remember or re-check: `key` and
+/// `pattern` are the rule's own identity (for [`AskOverrides`]); `rule` is the display text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AskRequest {
+    pub key: String,
+    pub pattern: String,
+    pub rule: String,
+}
+
+/// Ask rules a caller has already resolved to allow, kept in memory only (never persisted),
+/// keyed by `(key, pattern)` so "allow for session" scopes to the exact rule that was asked
+/// about, not every `ask` rule for the rest of the session.
+#[derive(Default)]
+pub struct AskOverrides(Mutex<HashSet<(String, String)>>);
+
+impl AskOverrides {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn allow(&self, key: &str, pattern: &str) {
+        let mut set = self.lock();
+        set.insert((key.to_string(), pattern.to_string()));
+    }
+
+    fn is_allowed(&self, key: &str, pattern: &str) -> bool {
+        self.lock()
+            .contains(&(key.to_string(), pattern.to_string()))
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashSet<(String, String)>> {
+        self.0.lock().unwrap_or_else(|p| p.into_inner())
+    }
+}
+
+/// An `ask` verdict either resolves via [`AskOverrides`] (treated as `Ok`) or is reported here,
+/// distinct from an outright `Deny`, so the caller can raise an approval-required action instead
+/// of failing the call.
+pub(crate) enum Verdict {
+    Deny(String),
+    Ask(AskRequest),
+}
 
 /// Ordered by restrictiveness, so the strictest of several decisions is their `max`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
@@ -135,31 +180,45 @@ impl PermissionConfig {
         }
     }
 
-    /// `Err(rule)` unless `key` allows `subject`. `ask` is treated as deny until approvals exist.
-    pub(crate) fn check(&self, key: Key, subject: &str) -> Result<(), String> {
+    /// `Err` unless `key` allows `subject`, or an `ask` rule was already resolved to allow via
+    /// `overrides`.
+    pub(crate) fn check(
+        &self,
+        key: Key,
+        subject: &str,
+        overrides: &AskOverrides,
+    ) -> Result<(), Verdict> {
         let (action, pattern) = self.rules(key).decide(subject);
-        verdict(RuleDecision {
-            key: key.name(),
-            action,
-            pattern,
-        })
+        verdict(
+            RuleDecision {
+                key: key.name(),
+                action,
+                pattern,
+            },
+            overrides,
+        )
     }
 
-    /// Checks an MCP tool call by its underlying name. Until approvals exist, `ask` is denied.
+    /// Checks an MCP tool call by its underlying name. `ask` has no approval flow yet, so it is
+    /// treated the same as `deny`; wiring MCP approvals is left to whoever adds them.
     pub fn check_mcp(&self, tool_name: &str) -> Result<(), String> {
         let (action, pattern) = self.mcp.decide(tool_name);
-        verdict(RuleDecision {
-            key: "mcp",
-            action,
-            pattern,
-        })
+        match action {
+            Action::Allow => Ok(()),
+            Action::Deny => Err(format!("mcp rule \"{pattern}\"")),
+            Action::Ask => Err(format!("mcp rule \"{pattern}\" requires approval")),
+        }
     }
 
     /// Checks the whole command and each `&&`/`||`/`;`/`|`/newline-separated segment, and the
     /// strictest decision wins, so `cd x && sudo y` can't hide behind its first word while
     /// `curl … | sh` still matches as a whole.
     // Command substitutions are checked as commands too, so they cannot hide denylisted calls.
-    pub(crate) fn check_command(&self, command: &str) -> Result<(), String> {
+    pub(crate) fn check_command(
+        &self,
+        command: &str,
+        overrides: &AskOverrides,
+    ) -> Result<(), Verdict> {
         let normalized = command
             .replace("&&", "\n")
             .replace("||", "\n")
@@ -175,37 +234,45 @@ impl PermissionConfig {
             .map(|subject| self.bash.decide(subject))
             .max_by_key(|(action, _)| *action)
             .unwrap_or((Action::Allow, "*"));
-        verdict(RuleDecision {
-            key: "bash",
-            action,
-            pattern,
-        })
+        verdict(
+            RuleDecision {
+                key: "bash",
+                action,
+                pattern,
+            },
+            overrides,
+        )
     }
 
     /// Resolves `requested` for a `key` operation: confined to the workspace (symlinks
     /// followed) unless `external_directory` allows the resolved path, then checked against
-    /// `key`'s rules. `Err` carries the guardrail rule that blocked it.
-    pub(crate) fn path(&self, key: Key, path: InternalPath<'_>) -> Result<PathBuf, String> {
+    /// `key`'s rules.
+    pub(crate) fn path(
+        &self,
+        key: Key,
+        path: InternalPath<'_>,
+        overrides: &AskOverrides,
+    ) -> Result<PathBuf, Verdict> {
         let workspace = path
             .workspace
             .canonicalize()
-            .map_err(|_| CONFINEMENT.to_string())?;
+            .map_err(|_| Verdict::Deny(CONFINEMENT.to_string()))?;
         let resolved = resolve(InternalPath {
             workspace: &workspace,
             requested: path.requested,
         })
-        .ok_or_else(|| CONFINEMENT.to_string())?;
+        .ok_or_else(|| Verdict::Deny(CONFINEMENT.to_string()))?;
         let subject = match resolved.strip_prefix(&workspace) {
             Ok(relative) => relative.to_string_lossy().into_owned(),
             Err(_) => {
                 let absolute = resolved.to_string_lossy().into_owned();
                 if self.external_directory.decide(&absolute).0 != Action::Allow {
-                    return Err(CONFINEMENT.to_string());
+                    return Err(Verdict::Deny(CONFINEMENT.to_string()));
                 }
                 absolute
             }
         };
-        self.check(key, &subject)?;
+        self.check(key, &subject, overrides)?;
         Ok(resolved)
     }
 }
@@ -216,7 +283,7 @@ struct RuleDecision<'a> {
     pattern: &'a str,
 }
 
-fn verdict(decision: RuleDecision<'_>) -> Result<(), String> {
+fn verdict(decision: RuleDecision<'_>, overrides: &AskOverrides) -> Result<(), Verdict> {
     let RuleDecision {
         key,
         action,
@@ -224,8 +291,13 @@ fn verdict(decision: RuleDecision<'_>) -> Result<(), String> {
     } = decision;
     match action {
         Action::Allow => Ok(()),
-        Action::Deny => Err(format!("{key} rule \"{pattern}\"")),
-        Action::Ask => Err(format!("{key} rule \"{pattern}\" requires approval")),
+        Action::Deny => Err(Verdict::Deny(format!("{key} rule \"{pattern}\""))),
+        Action::Ask if overrides.is_allowed(key, pattern) => Ok(()),
+        Action::Ask => Err(Verdict::Ask(AskRequest {
+            key: key.to_string(),
+            pattern: pattern.to_string(),
+            rule: format!("{key} rule \"{pattern}\" requires approval"),
+        })),
     }
 }
 

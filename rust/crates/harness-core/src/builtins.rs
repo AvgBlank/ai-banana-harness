@@ -9,30 +9,36 @@ use crate::config::AgentConfig;
 /// How many subagent threads may run at the same time.
 pub(crate) const MAX_PARALLEL_SUB_AGENTS: usize = 5;
 
+/// A question's answer options; more than this is a tool-level error.
+pub(crate) const MAX_QUESTION_OPTIONS: usize = 5;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Builtin {
     CreateSubAgent,
+    AskQuestion,
 }
 
 impl Builtin {
-    const ALL: [Builtin; 1] = [Builtin::CreateSubAgent];
+    const ALL: [Builtin; 2] = [Builtin::CreateSubAgent, Builtin::AskQuestion];
 
     fn name(self) -> &'static str {
         match self {
             Builtin::CreateSubAgent => "create_sub_agent",
+            Builtin::AskQuestion => "ask_question",
         }
     }
 
     /// Root-only tools are never offered to, or callable by, a subagent thread.
     fn root_only(self) -> bool {
         match self {
-            Builtin::CreateSubAgent => true,
+            Builtin::CreateSubAgent | Builtin::AskQuestion => true,
         }
     }
 
     fn enabled(self, config: &AgentConfig) -> bool {
         match self {
             Builtin::CreateSubAgent => config.subagents,
+            Builtin::AskQuestion => true,
         }
     }
 
@@ -71,6 +77,22 @@ impl Builtin {
                     "required": ["name", "input"],
                 }),
             },
+            Builtin::AskQuestion => ToolDefinition {
+                name: self.name().to_string(),
+                description: ASK_QUESTION_DESCRIPTION.to_string(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "question": {"type": "string", "description": "The question to ask the user."},
+                        "options": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Up to five suggested answers; the user may also answer freely.",
+                        },
+                    },
+                    "required": ["question"],
+                }),
+            },
         }
     }
 }
@@ -88,6 +110,10 @@ must provide a clear, self-contained instruction that includes all necessary con
 task to perform, any constraints, what outputs are expected, and what work has already been \
 completed so effort is not duplicated.";
 
+const ASK_QUESTION_DESCRIPTION: &str = "\
+Ask the user a question to resolve genuine ambiguity, with up to five suggested options; the \
+user may also answer with free text. The turn waits in place for the answer.";
+
 /// `create_sub_agent`'s arguments.
 #[derive(Debug, Deserialize)]
 pub(crate) struct SubAgentRequest {
@@ -101,6 +127,30 @@ impl SubAgentRequest {
             .map_err(|e| format!("invalid create_sub_agent arguments: {e}"))?;
         if request.name.trim().is_empty() || request.input.trim().is_empty() {
             return Err("create_sub_agent needs a non-empty name and input".to_string());
+        }
+        Ok(request)
+    }
+}
+
+/// `ask_question`'s arguments.
+#[derive(Debug, Deserialize)]
+pub(crate) struct QuestionRequest {
+    pub question: String,
+    #[serde(default)]
+    pub options: Vec<String>,
+}
+
+impl QuestionRequest {
+    pub(crate) fn parse(arguments: &str) -> Result<Self, String> {
+        let request: Self = serde_json::from_str(arguments)
+            .map_err(|e| format!("invalid ask_question arguments: {e}"))?;
+        if request.question.trim().is_empty() {
+            return Err("ask_question needs a non-empty question".to_string());
+        }
+        if request.options.len() > MAX_QUESTION_OPTIONS {
+            return Err(format!(
+                "ask_question allows at most {MAX_QUESTION_OPTIONS} options"
+            ));
         }
         Ok(request)
     }

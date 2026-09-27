@@ -25,8 +25,10 @@ pub fn call(ctx: &ToolContext<'_>, arguments: &Value) -> ToolResult {
     let Some(pattern) = arguments.get("pattern").and_then(Value::as_str) else {
         return ToolResult::error("grep requires a string \"pattern\" argument");
     };
-    if let Err(rule) = ctx.permission.check(Key::Grep, pattern) {
-        return ToolResult::blocked(&rule);
+    if let Err(result) =
+        crate::map_verdict(ctx.permission.check(Key::Grep, pattern, ctx.ask_overrides))
+    {
+        return result;
     }
     let workspace = ctx.workspace;
     let matcher = match RegexMatcher::new(pattern) {
@@ -62,8 +64,13 @@ pub fn call(ctx: &ToolContext<'_>, arguments: &Value) -> ToolResult {
             continue;
         }
         let display = relative.display().to_string();
-        // Files the `read` rules deny (e.g. `.env`) are skipped rather than leaked through grep.
-        if ctx.permission.check(Key::Read, &display).is_err() {
+        // Files the `read` rules deny (e.g. `.env`) are skipped rather than leaked through grep;
+        // an `ask` rule is skipped too rather than raising an approval per file.
+        if ctx
+            .permission
+            .check(Key::Read, &display, ctx.ask_overrides)
+            .is_err()
+        {
             continue;
         }
         // A binary or unreadable file just yields no hits; grep keeps going over the rest.

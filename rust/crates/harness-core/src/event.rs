@@ -73,6 +73,26 @@ pub enum EventKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
+    /// A tool call's permission resolved to `ask`; the turn waits for `reply(action_id, ...)`.
+    #[serde(rename = "tool.approval_required")]
+    ToolApprovalRequired {
+        action_id: String,
+        thread_id: String,
+        tool_call_id: String,
+        name: String,
+        arguments: String,
+        /// The guardrail rule that asked, e.g. `bash rule "sudo *" requires approval`.
+        rule: String,
+    },
+    /// The root-only question tool asked the user something; the turn waits for
+    /// `reply(action_id, ...)`.
+    #[serde(rename = "tool.response_required")]
+    ToolResponseRequired {
+        action_id: String,
+        thread_id: String,
+        question: String,
+        options: Vec<String>,
+    },
 }
 
 impl EventKind {
@@ -88,6 +108,8 @@ impl EventKind {
             EventKind::ContextCompacted { .. } => "context.compacted",
             EventKind::ThreadCreated { .. } => "thread.created",
             EventKind::ThreadDone { .. } => "thread.done",
+            EventKind::ToolApprovalRequired { .. } => "tool.approval_required",
+            EventKind::ToolResponseRequired { .. } => "tool.response_required",
         }
     }
 
@@ -100,7 +122,9 @@ impl EventKind {
             | EventKind::ToolResponse { thread_id, .. }
             | EventKind::ContextCompacted { thread_id, .. }
             | EventKind::ThreadCreated { thread_id, .. }
-            | EventKind::ThreadDone { thread_id, .. } => Some(thread_id),
+            | EventKind::ThreadDone { thread_id, .. }
+            | EventKind::ToolApprovalRequired { thread_id, .. }
+            | EventKind::ToolResponseRequired { thread_id, .. } => Some(thread_id),
             EventKind::TurnCreated { .. } | EventKind::TurnDone { .. } => None,
         }
     }

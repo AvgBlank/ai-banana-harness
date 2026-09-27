@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -10,13 +11,13 @@ use harness_llm::{
     ToolDefinition, Usage,
 };
 use harness_store::{FinishTurn, NewEvent, NewSession, NewTurn, Session, Store, UpsertThread};
-use harness_tools::ToolResult;
-use tokio::sync::{Semaphore, mpsc};
+use harness_tools::{AskOverrides, AskRequest, ToolResult};
+use tokio::sync::{Semaphore, mpsc, oneshot};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use ulid::{Generator, Ulid};
 
-use crate::builtins::{Builtin, MAX_PARALLEL_SUB_AGENTS, SubAgentRequest};
+use crate::builtins::{Builtin, MAX_PARALLEL_SUB_AGENTS, QuestionRequest, SubAgentRequest};
 use crate::compaction;
 use crate::config::{Config, Provider};
 use crate::event::{Event, EventKind, ModelOutput, TurnState};
@@ -24,6 +25,23 @@ use crate::instructions::{SystemPromptInput, system_prompt};
 use crate::mcp::{McpRegistry, McpServerStatus};
 use crate::skills::load_skills;
 use crate::tools::{ToolInvocation, TurnTools};
+
+/// How a required action was resolved; see [`TurnHandle::reply`].
+#[derive(Clone, Debug)]
+pub enum Answer {
+    /// Approval: run the call once, without remembering the rule.
+    Allow,
+    /// Approval: run the call, and skip the prompt for the same rule for the rest of the
+    /// session.
+    AllowForSession,
+    /// Approval: don't run the call. Also a question's fallback when it can't be answered.
+    Deny,
+    /// A question's answer: the chosen option's text, or free text.
+    Text(String),
+}
+
+/// A required action's pending reply, keyed by its `action_id`.
+type PendingActions = Arc<Mutex<HashMap<String, oneshot::Sender<Answer>>>>;
 
 /// The setting key that stores the provider last chosen, read back to preselect the startup
 /// popup and updated whenever `/provider` switches a session.
@@ -39,6 +57,9 @@ pub struct HarnessOptions {
     /// The value of `AI_API_KEY`; see [`crate::api_key_from_env`].
     pub api_key: String,
     pub workspace: PathBuf,
+    /// A headless run has no one to answer a required action: questions are auto-answered and
+    /// `ask` rules resolve to deny, both without waiting.
+    pub headless: bool,
 }
 
 /// The in-process agent harness. Both surfaces drive it only through `start_turn` and the handle.
@@ -57,18 +78,42 @@ struct Inner {
     redactor: Redactor,
     /// Lives as long as the harness, so a server connected in one turn is reused by the next.
     mcp: Arc<McpRegistry>,
+    /// `ask` rules allowed "for session"; lives as long as the harness, across every turn.
+    ask_overrides: Arc<AskOverrides>,
+    headless: bool,
 }
 
 pub struct TurnHandle {
     pub events: mpsc::Receiver<Event>,
     cancel: CancellationToken,
+    pending: PendingActions,
 }
 
 impl TurnHandle {
-    /// Stops the running turn; it ends with `turn.done{state: cancelled}`.
+    /// Stops the running turn; it ends with `turn.done{state: cancelled}`. Every required
+    /// action currently waiting resolves as denied (ADR 0002): each one is independently
+    /// selecting on this same token inside [`TurnRunner::wait_for_answer`].
     pub fn cancel(&self) {
         self.cancel.cancel();
     }
+
+    /// Resolves a required action raised as `tool.approval_required` or `tool.response_required`.
+    /// A reply to an id that already resolved (answered twice, or after cancel) is a no-op.
+    pub fn reply(&self, action_id: &str, answer: Answer) {
+        let sender = {
+            let mut pending = lock(&self.pending);
+            pending.remove(action_id)
+        };
+        if let Some(sender) = sender {
+            let _ = sender.send(answer);
+        }
+    }
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 impl Harness {
@@ -98,6 +143,8 @@ impl Harness {
                 api_key: options.api_key.clone(),
                 workspace: options.workspace,
                 redactor: Redactor::new(&options.api_key),
+                ask_overrides: Arc::new(AskOverrides::new()),
+                headless: options.headless,
             }),
         })
     }
@@ -154,14 +201,20 @@ impl Harness {
     pub fn start_turn(&self, session_id: &str, input: String) -> TurnHandle {
         let (tx, events) = mpsc::channel(256);
         let cancel = CancellationToken::new();
+        let pending = Arc::new(Mutex::new(HashMap::new()));
         let turn = TurnRunner {
             inner: Arc::clone(&self.inner),
             turn_id: new_id(),
             tx,
             cancel: cancel.clone(),
+            pending: Arc::clone(&pending),
         };
         tokio::spawn(turn.run(session_id.to_string(), input));
-        TurnHandle { events, cancel }
+        TurnHandle {
+            events,
+            cancel,
+            pending,
+        }
     }
 }
 
@@ -173,6 +226,7 @@ struct TurnRunner {
     turn_id: String,
     tx: mpsc::Sender<Event>,
     cancel: CancellationToken,
+    pending: PendingActions,
 }
 
 impl TurnRunner {
@@ -297,6 +351,7 @@ impl TurnRunner {
                 inner.workspace.clone(),
                 inner.config.tools.clone(),
                 inner.config.permission.clone(),
+                Arc::clone(&inner.ask_overrides),
                 &builtin_definitions,
             ) => {
                 Arc::new(tools)
@@ -515,8 +570,10 @@ impl TurnRunner {
     }
 
     /// Runs one round's calls, returning results in the calls' order. Host tools run in
-    /// parallel on blocking threads; `create_sub_agent` calls become child threads, and this
-    /// thread waits for all of them (only leaf threads run).
+    /// parallel on blocking threads (an `ask` permission pauses just that call for approval);
+    /// `create_sub_agent` calls become child threads, and this thread waits for all of them
+    /// (only leaf threads run); `ask_question` calls are answered in sequence, since the TUI
+    /// has only one modal slot at a time.
     async fn run_tool_calls(
         &self,
         shared: &Arc<TurnShared>,
@@ -526,24 +583,26 @@ impl TurnRunner {
         let mut results: Vec<Option<ToolResult>> = vec![None; calls.len()];
         let mut other = Vec::new();
         let mut children = Vec::new();
+        let mut questions = Vec::new();
         for (index, call) in calls.iter().enumerate() {
             match Builtin::find(&call.name, thread.is_root(), &self.inner.config.agent) {
                 Some(Builtin::CreateSubAgent) => match SubAgentRequest::parse(&call.arguments) {
                     Ok(request) => children.push((index, request)),
                     Err(message) => results[index] = Some(ToolResult::error(message)),
                 },
+                Some(Builtin::AskQuestion) => match QuestionRequest::parse(&call.arguments) {
+                    Ok(request) => questions.push((index, request)),
+                    Err(message) => results[index] = Some(ToolResult::error(message)),
+                },
                 None => {
                     let tools = Arc::clone(&shared.tools);
                     let call = call.clone();
+                    let runner = self.clone();
+                    let thread_id = thread.id.clone();
                     other.push((
                         index,
                         tokio::spawn(async move {
-                            tools
-                                .call(ToolInvocation {
-                                    name: &call.name,
-                                    arguments_json: &call.arguments,
-                                })
-                                .await
+                            runner.call_host_tool(&tools, &thread_id, &call).await
                         }),
                     ));
                 }
@@ -567,6 +626,18 @@ impl TurnRunner {
                 results[index] = Some(result);
             }
         }
+        for (index, request) in questions {
+            let answer = self
+                .request_question(&thread.id, &request.question, &request.options)
+                .await;
+            let text = match answer {
+                Answer::Text(text) => text,
+                Answer::Allow | Answer::AllowForSession | Answer::Deny => {
+                    "No user available; proceed with your best judgement".to_string()
+                }
+            };
+            results[index] = Some(ToolResult::ok(text));
+        }
         for (index, handle) in other {
             results[index] = Some(handle.await.context("tool call task panicked")?);
         }
@@ -574,6 +645,101 @@ impl TurnRunner {
             .into_iter()
             .map(|result| result.ok_or_else(|| anyhow!("a tool call produced no result")))
             .collect()
+    }
+
+    /// Runs one host tool call, resolving an `ask` permission through a required action before
+    /// retrying it: allow-once bypasses just this call, allow-for-session also remembers the
+    /// rule on `tools` so later identical calls skip the prompt, and deny returns without
+    /// running the call at all.
+    async fn call_host_tool(
+        &self,
+        tools: &TurnTools,
+        thread_id: &str,
+        call: &ToolCallResult,
+    ) -> ToolResult {
+        let invocation = || ToolInvocation {
+            name: &call.name,
+            arguments_json: &call.arguments,
+        };
+        let result = tools.call(invocation(), None).await;
+        let Some(ask) = result.needs_approval.clone() else {
+            return result;
+        };
+        match self.request_approval(thread_id, call, &ask).await {
+            Answer::Deny | Answer::Text(_) => ToolResult::denied(&ask.rule),
+            Answer::Allow => {
+                tools
+                    .call(invocation(), Some((ask.key.clone(), ask.pattern.clone())))
+                    .await
+            }
+            Answer::AllowForSession => {
+                tools.allow_for_session(&ask.key, &ask.pattern);
+                tools.call(invocation(), None).await
+            }
+        }
+    }
+
+    /// Raises `tool.approval_required` and waits for the reply, or resolves to deny immediately
+    /// in a headless run.
+    async fn request_approval(
+        &self,
+        thread_id: &str,
+        call: &ToolCallResult,
+        ask: &AskRequest,
+    ) -> Answer {
+        let action_id = new_id();
+        let _ = self
+            .emit(EventKind::ToolApprovalRequired {
+                action_id: action_id.clone(),
+                thread_id: thread_id.to_string(),
+                tool_call_id: call.id.clone(),
+                name: call.name.clone(),
+                arguments: call.arguments.clone(),
+                rule: ask.rule.clone(),
+            })
+            .await;
+        self.wait_for_answer(action_id, Answer::Deny).await
+    }
+
+    /// Raises `tool.response_required` and waits for the reply, or auto-answers immediately in a
+    /// headless run.
+    async fn request_question(
+        &self,
+        thread_id: &str,
+        question: &str,
+        options: &[String],
+    ) -> Answer {
+        let action_id = new_id();
+        let _ = self
+            .emit(EventKind::ToolResponseRequired {
+                action_id: action_id.clone(),
+                thread_id: thread_id.to_string(),
+                question: question.to_string(),
+                options: options.to_vec(),
+            })
+            .await;
+        let default =
+            Answer::Text("No user available; proceed with your best judgement".to_string());
+        self.wait_for_answer(action_id, default).await
+    }
+
+    /// Parks on the action's reply, unless this is a headless run (no one will ever reply, so
+    /// `headless_default` resolves it immediately) or the turn is cancelled (every pending
+    /// action resolves to deny independently, per ADR 0002).
+    async fn wait_for_answer(&self, action_id: String, headless_default: Answer) -> Answer {
+        if self.inner.headless {
+            return headless_default;
+        }
+        let (tx, rx) = oneshot::channel();
+        lock(&self.pending).insert(action_id.clone(), tx);
+        tokio::select! {
+            biased;
+            () = self.cancel.cancelled() => {
+                lock(&self.pending).remove(&action_id);
+                Answer::Deny
+            }
+            answer = rx => answer.unwrap_or(Answer::Deny),
+        }
     }
 
     /// A subagent thread as a boxed future: it waits for a free slot, runs its own loop, and

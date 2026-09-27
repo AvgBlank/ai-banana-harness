@@ -21,7 +21,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use similar::TextDiff;
 
-pub use guardrail::{Action, PermissionConfig, Rules};
+pub use guardrail::{Action, AskOverrides, AskRequest, PermissionConfig, Rules};
 
 /// The `[tools]` config section.
 #[derive(Clone, Debug, Deserialize)]
@@ -39,21 +39,31 @@ pub struct ToolContext<'a> {
     pub permission: &'a PermissionConfig,
     /// Environment variables removed from `bash` subprocesses, e.g. the provider key.
     pub hidden_env: &'a [&'a str],
+    /// `ask` rules already resolved to allow, in memory only; see [`AskOverrides`].
+    pub ask_overrides: &'a AskOverrides,
 }
 
 impl ToolContext<'_> {
-    /// A path argument resolved and permitted for `key`, or the blocked result to return.
+    /// A path argument resolved and permitted for `key`, or the blocked/needs-approval result to
+    /// return.
     fn path(&self, key: guardrail::Key, requested: &str) -> Result<PathBuf, ToolResult> {
-        self.permission
-            .path(
-                key,
-                guardrail::InternalPath {
-                    workspace: self.workspace,
-                    requested: Path::new(requested),
-                },
-            )
-            .map_err(|rule| ToolResult::blocked(&rule))
+        map_verdict(self.permission.path(
+            key,
+            guardrail::InternalPath {
+                workspace: self.workspace,
+                requested: Path::new(requested),
+            },
+            self.ask_overrides,
+        ))
     }
+}
+
+/// Converts a guardrail verdict into the `ToolResult` a host tool returns instead of running.
+pub(crate) fn map_verdict<T>(result: Result<T, guardrail::Verdict>) -> Result<T, ToolResult> {
+    result.map_err(|verdict| match verdict {
+        guardrail::Verdict::Deny(rule) => ToolResult::blocked(&rule),
+        guardrail::Verdict::Ask(ask) => ToolResult::ask(ask),
+    })
 }
 
 pub use large_output::cap_large_outputs;
@@ -139,6 +149,11 @@ pub struct ToolResult {
     pub failed: bool,
     /// A successful file change's actual before/after diff, for display only.
     pub diff: Option<String>,
+    /// Set instead of running the call: an `ask` rule matched and needs a required-action
+    /// round trip before the caller can retry with it resolved. `content` is not meaningful.
+    /// Boxed so an ordinary `ToolResult` (the overwhelming majority) stays small; clippy's
+    /// `result_large_err` flags every `Result<_, ToolResult>` otherwise.
+    pub needs_approval: Option<Box<AskRequest>>,
 }
 
 impl ToolResult {
@@ -148,6 +163,7 @@ impl ToolResult {
             blocked: false,
             failed: false,
             diff: None,
+            needs_approval: None,
         }
     }
 
@@ -158,6 +174,7 @@ impl ToolResult {
             blocked: false,
             failed: true,
             diff: None,
+            needs_approval: None,
         }
     }
 
@@ -169,6 +186,7 @@ impl ToolResult {
             blocked: false,
             failed: true,
             diff: None,
+            needs_approval: None,
         }
     }
 
@@ -180,6 +198,29 @@ impl ToolResult {
             blocked: true,
             failed: true,
             diff: None,
+            needs_approval: None,
+        }
+    }
+
+    /// An `ask` rule matched; the caller (harness-core) raises the required action and retries.
+    pub fn ask(ask: AskRequest) -> Self {
+        Self {
+            content: format!("Approval required: {}", ask.rule),
+            blocked: false,
+            failed: true,
+            diff: None,
+            needs_approval: Some(Box::new(ask)),
+        }
+    }
+
+    /// The user denied an approval-required call.
+    pub fn denied(reason: &str) -> Self {
+        Self {
+            content: format!("User denied tool call: {reason}"),
+            blocked: true,
+            failed: true,
+            diff: None,
+            needs_approval: None,
         }
     }
 }
