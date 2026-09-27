@@ -1,7 +1,9 @@
 //! The one dark palette every screen draws from, with a banana-yellow accent.
 //!
-//! Colours are truecolor `Rgb`; terminals without 24-bit support degrade these to their
-//! nearest palette entry on their own, so no separate 256-colour table is kept here.
+//! Each colour has a truecolor value and a hand-picked nearest xterm-256 entry; [`init`] picks
+//! one set once at startup, and every style helper below honours that choice.
+
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use ratatui::style::{Color, Modifier, Style};
 
@@ -16,34 +18,126 @@ pub const SUCCESS: Color = Color::Rgb(0x7c, 0xc4, 0x6a);
 pub const DIFF_ADDED_BG: Color = Color::Rgb(0x1c, 0x33, 0x1c);
 pub const DIFF_REMOVED_BG: Color = Color::Rgb(0x3a, 0x1c, 0x1e);
 
+/// A palette colour: its truecolor value and the nearest xterm-256 entry.
+struct Swatch {
+    truecolor: Color,
+    fallback: u8,
+}
+
+impl Swatch {
+    fn get(&self) -> Color {
+        if TRUECOLOR.load(Ordering::Relaxed) {
+            self.truecolor
+        } else {
+            Color::Indexed(self.fallback)
+        }
+    }
+}
+
+const BACKGROUND_SWATCH: Swatch = Swatch {
+    truecolor: BACKGROUND,
+    fallback: 233,
+};
+const TEXT_SWATCH: Swatch = Swatch {
+    truecolor: TEXT,
+    fallback: 254,
+};
+const MUTED_SWATCH: Swatch = Swatch {
+    truecolor: MUTED,
+    fallback: 245,
+};
+const BORDER_SWATCH: Swatch = Swatch {
+    truecolor: BORDER,
+    fallback: 237,
+};
+const ACCENT_SWATCH: Swatch = Swatch {
+    truecolor: ACCENT,
+    fallback: 221,
+};
+const ERROR_SWATCH: Swatch = Swatch {
+    truecolor: ERROR,
+    fallback: 167,
+};
+const SUCCESS_SWATCH: Swatch = Swatch {
+    truecolor: SUCCESS,
+    fallback: 108,
+};
+const DIFF_ADDED_BG_SWATCH: Swatch = Swatch {
+    truecolor: DIFF_ADDED_BG,
+    fallback: 22,
+};
+const DIFF_REMOVED_BG_SWATCH: Swatch = Swatch {
+    truecolor: DIFF_REMOVED_BG,
+    fallback: 52,
+};
+
+/// Truecolor until [`init`] or [`set_truecolor`] says otherwise, so tests see the RGB palette.
+static TRUECOLOR: AtomicBool = AtomicBool::new(true);
+
+/// Env var that forces the palette: `truecolor` or `256`.
+pub const COLORS_ENV: &str = "BANANA_HARNESS_COLORS";
+
+/// Picks the palette once at startup from the process environment.
+pub fn init() {
+    set_truecolor(supports_truecolor(|name| std::env::var(name).ok()));
+}
+
+/// The [`COLORS_ENV`] override wins; otherwise truecolor only when `COLORTERM` says so, which
+/// truecolor terminals do (`truecolor`/`24bit`) and 256-colour ones such as Apple Terminal don't.
+// ponytail: env heuristic, not terminfo; the override covers terminals that guess wrong.
+pub fn supports_truecolor(env: impl Fn(&str) -> Option<String>) -> bool {
+    let truecolor = |value: &str| matches!(value, "truecolor" | "24bit");
+    match env(COLORS_ENV) {
+        Some(forced) if forced == "256" => false,
+        Some(forced) if truecolor(&forced) => true,
+        _ => env("COLORTERM").is_some_and(|value| truecolor(&value)),
+    }
+}
+
+pub fn set_truecolor(enabled: bool) {
+    TRUECOLOR.store(enabled, Ordering::Relaxed);
+}
+
 pub fn base() -> Style {
-    Style::new().fg(TEXT).bg(BACKGROUND)
+    Style::new()
+        .fg(TEXT_SWATCH.get())
+        .bg(BACKGROUND_SWATCH.get())
 }
 
 pub fn border() -> Style {
-    Style::new().fg(BORDER)
+    Style::new().fg(BORDER_SWATCH.get())
 }
 
 pub fn border_focused() -> Style {
-    Style::new().fg(ACCENT)
+    accent()
 }
 
 pub fn accent() -> Style {
-    Style::new().fg(ACCENT)
+    Style::new().fg(ACCENT_SWATCH.get())
 }
 
 pub fn accent_bold() -> Style {
-    Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)
+    accent().add_modifier(Modifier::BOLD)
 }
 
 pub fn muted() -> Style {
-    Style::new().fg(MUTED)
+    Style::new().fg(MUTED_SWATCH.get())
 }
 
 pub fn error() -> Style {
-    Style::new().fg(ERROR).add_modifier(Modifier::BOLD)
+    Style::new()
+        .fg(ERROR_SWATCH.get())
+        .add_modifier(Modifier::BOLD)
 }
 
 pub fn success() -> Style {
-    Style::new().fg(SUCCESS)
+    Style::new().fg(SUCCESS_SWATCH.get())
+}
+
+pub fn diff_added_bg() -> Color {
+    DIFF_ADDED_BG_SWATCH.get()
+}
+
+pub fn diff_removed_bg() -> Color {
+    DIFF_REMOVED_BG_SWATCH.get()
 }

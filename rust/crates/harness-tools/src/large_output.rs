@@ -18,7 +18,11 @@ const FAILURE_TRUNCATION_CHARS: usize = 500;
 const SPILL_DIR: &str = ".banana-harness/tool-output";
 
 /// Rewrites oversized results in `batch` (tool name, result) in place, in the batch's order.
-pub fn cap_large_outputs(workspace: &Path, batch: &mut [(String, ToolResult)]) {
+pub fn cap_large_outputs(
+    workspace: &Path,
+    subagents_enabled: bool,
+    batch: &mut [(String, ToolResult)],
+) {
     let sizes: Vec<f64> = batch.iter().map(|(_, r)| tokens(&r.content)).collect();
     let mut total: f64 = sizes.iter().sum();
     if total < INDIVIDUAL_TOKEN_THRESHOLD {
@@ -28,19 +32,34 @@ pub fn cap_large_outputs(workspace: &Path, batch: &mut [(String, ToolResult)]) {
         (0..batch.len()).partition(|&i| sizes[i] >= INDIVIDUAL_TOKEN_THRESHOLD);
     rest.sort_by(|&a, &b| sizes[b].total_cmp(&sizes[a]));
     for i in oversized {
-        total -= block(workspace, i, &mut batch[i]);
+        total -= block(workspace, subagents_enabled, i, &mut batch[i]);
     }
     for i in rest {
         if total < TOTAL_TOKEN_THRESHOLD {
             break;
         }
-        total -= block(workspace, i, &mut batch[i]);
+        total -= block(workspace, subagents_enabled, i, &mut batch[i]);
     }
 }
 
 /// Replaces one result's content and returns the tokens that saved.
-fn block(workspace: &Path, index: usize, (name, result): &mut (String, ToolResult)) -> f64 {
+fn block(
+    workspace: &Path,
+    subagents_enabled: bool,
+    index: usize,
+    (name, result): &mut (String, ToolResult),
+) -> f64 {
     let original = std::mem::take(&mut result.content);
+    let delegation = if subagents_enabled {
+        "\n2. Delegate analysis to a subagent, passing it the saved file path."
+    } else {
+        ""
+    };
+    let fallback_delegation = if subagents_enabled {
+        "\n2. Delegate a narrower query to a subagent."
+    } else {
+        ""
+    };
     result.content = if result.failed {
         original.chars().take(FAILURE_TRUNCATION_CHARS).collect()
     } else {
@@ -48,13 +67,13 @@ fn block(workspace: &Path, index: usize, (name, result): &mut (String, ToolResul
         match spill(workspace, name, index, &original) {
             Ok(path) => format!(
                 "Content too large. Result saved to: {path}.\n\nThe Agent can do the following to handle it:\n\
-                 1. Use read_file with offset and limit to read parts of the file, or grep with this path to extract data.\n\n\
+                 1. Use read_file with offset and limit to read parts of the file, or grep with this path to extract data.{delegation}\n\n\
                  Preview (first and last {PREVIEW_CHARS} chars):\n{preview}"
             ),
             // Losing the full content beats failing the step; the preview still survives.
             Err(_) => format!(
                 "Content too big. To handle a large tool call the Agent can do the following:\n\
-                 1. Check if some parameter can be passed in order to reduce the output size.\n\n\
+                 1. Check if some parameter can be passed in order to reduce the output size.{fallback_delegation}\n\n\
                  Preview (first and last {PREVIEW_CHARS} chars):\n{preview}"
             ),
         }

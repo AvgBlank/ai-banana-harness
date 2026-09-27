@@ -477,8 +477,9 @@ impl TurnRunner {
                 .map(|(call, result)| (call.name.clone(), result))
                 .collect();
             let workspace = self.inner.workspace.clone();
+            let subagents_enabled = self.inner.config.agent.subagents;
             let batch = tokio::task::spawn_blocking(move || {
-                harness_tools::cap_large_outputs(&workspace, &mut batch);
+                harness_tools::cap_large_outputs(&workspace, subagents_enabled, &mut batch);
                 batch
             })
             .await

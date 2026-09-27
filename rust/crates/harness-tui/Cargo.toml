@@ -9,7 +9,7 @@ publish.workspace = true
 harness-core.workspace = true
 anyhow.workspace = true
 crossterm.workspace = true
-ratatui.workspace = true
+ratatui = { workspace = true, features = ["unstable-rendered-line-info"] }
 tui-markdown.workspace = true
 tokio.workspace = true
 futures-util.workspace = true

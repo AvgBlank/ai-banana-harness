@@ -6,7 +6,8 @@ pub mod theme;
 pub mod ui;
 
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -26,12 +27,13 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use tokio::time::interval;
 
-use crate::app::{App, Screen};
+use crate::app::{App, FileChange, Screen};
 
 const FRAME_INTERVAL: Duration = Duration::from_millis(33);
 
 /// Runs the TUI to completion. The terminal is restored on every exit path, including an error.
 pub async fn run() -> Result<()> {
+    theme::init();
     let mut terminal = TerminalGuard::enter()?;
 
     let mut store = Some(Store::open(&default_db_path()?).context("opening the database")?);
@@ -72,6 +74,10 @@ pub async fn run() -> Result<()> {
                 };
                 let done = matches!(event.kind, EventKind::TurnDone { .. });
                 if let Some(main) = app.main_mut() {
+                    // Before `turn.done` is applied, so its summary card counts the final state.
+                    if done || matches!(event.kind, EventKind::ToolResponse { .. }) {
+                        main.modified_files = workspace_changes(&main.workspace);
+                    }
                     main.apply_event(event);
                     // A turn is what connects MCP servers, so its events are when state changes.
                     if let Some(h) = harness.as_ref() {
@@ -86,7 +92,7 @@ pub async fn run() -> Result<()> {
             ct_event = term_events.next() => {
                 let Some(ct_event) = ct_event else { break };
                 let ct_event = ct_event.context("reading a terminal event")?;
-                if handle_terminal_event(
+                match handle_terminal_event(
                     &mut app,
                     &ct_event,
                     &mut store,
@@ -95,7 +101,20 @@ pub async fn run() -> Result<()> {
                     &mut session_id,
                     &mut turn,
                 )? {
-                    break;
+                    Flow::Continue => {}
+                    Flow::Quit => break,
+                    Flow::OpenEditor => {
+                        // The stream's background reader would steal the editor's keystrokes,
+                        // so it's dropped for the duration and recreated afterwards.
+                        drop(term_events);
+                        if let Some(main) = app.main_mut() {
+                            match edit_in_editor(&mut terminal, &main.input) {
+                                Ok(text) => main.input = text,
+                                Err(e) => main.last_error = Some(format!("{e:#}")),
+                            }
+                        }
+                        term_events = EventStream::new();
+                    }
                 }
                 dirty = true;
             }
@@ -113,7 +132,13 @@ async fn recv_turn_event(turn: &mut Option<TurnHandle>) -> Option<HarnessEvent> 
     }
 }
 
-/// Returns `true` when the loop should exit.
+/// What the run loop does after a terminal event: the parts that need the terminal itself.
+enum Flow {
+    Continue,
+    Quit,
+    OpenEditor,
+}
+
 fn handle_terminal_event(
     app: &mut App,
     event: &CtEvent,
@@ -122,20 +147,21 @@ fn handle_terminal_event(
     harness: &mut Option<Harness>,
     session_id: &mut String,
     turn: &mut Option<TurnHandle>,
-) -> Result<bool> {
+) -> Result<Flow> {
     match event {
         CtEvent::Paste(text) => {
             paste_into(app, text);
-            Ok(false)
+            Ok(Flow::Continue)
         }
         CtEvent::Key(key) if key.kind == KeyEventKind::Press => match interpret_key(app, *key) {
-            Action::None => Ok(false),
-            Action::Quit => Ok(true),
+            Action::None => Ok(Flow::Continue),
+            Action::Quit => Ok(Flow::Quit),
+            Action::OpenEditor => Ok(Flow::OpenEditor),
             Action::Cancel => {
                 if let Some(t) = turn.as_ref() {
                     t.cancel();
                 }
-                Ok(false)
+                Ok(Flow::Continue)
             }
             Action::Send(text) => {
                 if let Some(h) = harness.as_ref() {
@@ -144,7 +170,7 @@ fn handle_terminal_event(
                     }
                     *turn = Some(h.start_turn(session_id, text));
                 }
-                Ok(false)
+                Ok(Flow::Continue)
             }
             Action::NewSession => {
                 if let Some(h) = harness.as_ref() {
@@ -153,7 +179,7 @@ fn handle_terminal_event(
                         main.start_new_session();
                     }
                 }
-                Ok(false)
+                Ok(Flow::Continue)
             }
             Action::ListSessions => {
                 if let Some(h) = harness.as_ref() {
@@ -162,7 +188,7 @@ fn handle_terminal_event(
                         main.open_sessions(sessions);
                     }
                 }
-                Ok(false)
+                Ok(Flow::Continue)
             }
             Action::ResumeSession(id) => {
                 if let Some(h) = harness.as_ref()
@@ -174,13 +200,13 @@ fn handle_terminal_event(
                         main.context_limit = Some(h.compaction_threshold(main.provider));
                     }
                 }
-                Ok(false)
+                Ok(Flow::Continue)
             }
             Action::CloseOverlay => {
                 if let Some(main) = app.main_mut() {
                     main.close_overlay();
                 }
-                Ok(false)
+                Ok(Flow::Continue)
             }
             Action::ToggleProvider => {
                 if let Some(h) = harness.as_ref()
@@ -194,7 +220,7 @@ fn handle_terminal_event(
                     main.set_provider(next);
                     main.context_limit = Some(h.compaction_threshold(next));
                 }
-                Ok(false)
+                Ok(Flow::Continue)
             }
             Action::ConfirmStartup {
                 provider,
@@ -207,11 +233,19 @@ fn handle_terminal_event(
                 match resolved.canonicalize() {
                     Ok(path) => {
                         let Some(taken) = store.take() else {
-                            return Ok(false);
+                            return Ok(Flow::Continue);
                         };
-                        let (opened, sid) = open_harness(taken, provider, path.clone())?;
+                        let config = Config::embedded_default()?;
+                        let (opened, sid) = open_harness(OpenHarness {
+                            store: taken,
+                            config: config.clone(),
+                            provider,
+                            workspace: path.clone(),
+                        })?;
                         app.enter_main(provider, path);
                         if let Some(main) = app.main_mut() {
+                            main.config = Some(config);
+                            main.modified_files = workspace_changes(&main.workspace);
                             main.mcp = opened.mcp_status();
                             main.context_limit = Some(opened.compaction_threshold(provider));
                         }
@@ -225,10 +259,10 @@ fn handle_terminal_event(
                         }
                     }
                 }
-                Ok(false)
+                Ok(Flow::Continue)
             }
         },
-        _ => Ok(false),
+        _ => Ok(Flow::Continue),
     }
 }
 
@@ -252,6 +286,7 @@ enum Action {
     ResumeSession(String),
     CloseOverlay,
     ToggleProvider,
+    OpenEditor,
     ConfirmStartup {
         provider: Provider,
         workspace: String,
@@ -308,6 +343,10 @@ fn interpret_key(app: &mut App, key: KeyEvent) -> Action {
             }
 
             match key.code {
+                KeyCode::Char('b') if ctrl => state.toggle_sidebar(),
+                KeyCode::Char('e') if ctrl => return Action::OpenEditor,
+                KeyCode::PageUp => state.scroll_up(),
+                KeyCode::PageDown => state.scroll_down(),
                 KeyCode::Enter if key.modifiers.contains(KeyModifiers::ALT) => {
                     state.input.push('\n');
                 }
@@ -326,6 +365,7 @@ fn interpret_key(app: &mut App, key: KeyEvent) -> Action {
                         "/new" => return Action::NewSession,
                         "/sessions" => return Action::ListSessions,
                         "/provider" => return Action::ToggleProvider,
+                        "/help" => state.open_help(),
                         _ => return Action::Send(text),
                     }
                 }
@@ -341,7 +381,7 @@ fn interpret_key(app: &mut App, key: KeyEvent) -> Action {
     }
 }
 
-/// Key handling while the `/sessions` overlay is open: it captures every key until it closes.
+/// Key handling while an overlay is open: it captures every key until it closes.
 fn interpret_overlay_key(overlay: &mut app::Overlay, code: KeyCode) -> Action {
     match overlay {
         app::Overlay::Sessions { sessions, selected } => match code {
@@ -362,15 +402,101 @@ fn interpret_overlay_key(overlay: &mut app::Overlay, code: KeyCode) -> Action {
             KeyCode::Esc => Action::CloseOverlay,
             _ => Action::None,
         },
+        app::Overlay::Help => match code {
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => Action::CloseOverlay,
+            _ => Action::None,
+        },
     }
+}
+
+/// Suspends the TUI, opens `text` in `$VISUAL`/`$EDITOR` (falling back to `vi`), and returns
+/// the edited text once the editor exits. The TUI is restored even when the editor fails.
+fn edit_in_editor(terminal: &mut TerminalGuard, text: &str) -> Result<String> {
+    let path = std::env::temp_dir().join(format!("banana-harness-input-{}.md", std::process::id()));
+    std::fs::write(&path, text).context("writing the editor's temp file")?;
+    let editor = std::env::var("VISUAL")
+        .or_else(|_| std::env::var("EDITOR"))
+        .unwrap_or_else(|_| "vi".to_string());
+    // `EDITOR` may carry flags, e.g. `code --wait`.
+    let mut words = editor.split_whitespace();
+    let program = words.next().unwrap_or("vi");
+
+    terminal.suspend();
+    let status = Command::new(program).args(words).arg(&path).status();
+    terminal.resume()?;
+
+    let result = match status {
+        Ok(status) if status.success() => std::fs::read_to_string(&path)
+            .map(|edited| edited.trim_end_matches('\n').to_string())
+            .context("reading the edited input"),
+        Ok(status) => Err(anyhow::anyhow!("{editor} exited with {status}")),
+        Err(e) => Err(e).with_context(|| format!("running {editor}")),
+    };
+    let _ = std::fs::remove_file(&path);
+    result
+}
+
+/// The workspace's uncommitted changes against `HEAD`, plus untracked files, for display only.
+/// Empty when the workspace isn't a git repository or git isn't installed.
+// ponytail: runs git synchronously on the UI thread; move to spawn_blocking if it ever lags.
+pub fn workspace_changes(workspace: &Path) -> Vec<FileChange> {
+    let mut changes: Vec<FileChange> = git(workspace, &["diff", "--numstat", "HEAD"])
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.splitn(3, '\t');
+            let added = fields.next()?;
+            let removed = fields.next()?;
+            Some(FileChange {
+                path: fields.next()?.to_string(),
+                // Binary files report `-`.
+                added: added.parse().unwrap_or(0),
+                removed: removed.parse().unwrap_or(0),
+            })
+        })
+        .collect();
+    for path in git(workspace, &["ls-files", "--others", "--exclude-standard"]).lines() {
+        let added = std::fs::read_to_string(workspace.join(path))
+            .map_or(0, |text| text.lines().count() as u64);
+        changes.push(FileChange {
+            path: path.to_string(),
+            added,
+            removed: 0,
+        });
+    }
+    changes
+}
+
+fn git(workspace: &Path, args: &[&str]) -> String {
+    Command::new("git")
+        .arg("-C")
+        .arg(workspace)
+        .args(args)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+        .unwrap_or_default()
+}
+
+struct OpenHarness {
+    store: Store,
+    config: Config,
+    provider: Provider,
+    workspace: PathBuf,
 }
 
 /// Persists the chosen provider, opens the harness against `workspace`, and creates its session.
 /// A failure here is treated as fatal: the config is embedded and the key was already confirmed
 /// present, so this should not fail in practice.
-fn open_harness(store: Store, provider: Provider, workspace: PathBuf) -> Result<(Harness, String)> {
+fn open_harness(
+    OpenHarness {
+        store,
+        config,
+        provider,
+        workspace,
+    }: OpenHarness,
+) -> Result<(Harness, String)> {
     store.set_setting(LAST_PROVIDER_SETTING, provider.as_str())?;
-    let config = Config::embedded_default()?;
     let api_key = api_key_from_env()?;
     let harness = Harness::open(HarnessOptions {
         config,
@@ -409,15 +535,33 @@ impl TerminalGuard {
         self.terminal.draw(render).context("drawing a frame")?;
         Ok(())
     }
-}
 
-impl Drop for TerminalGuard {
-    fn drop(&mut self) {
+    /// Hands the terminal back to the shell, e.g. while `$EDITOR` runs. Best effort, as in `Drop`.
+    fn suspend(&mut self) {
         let _ = execute!(
             self.terminal.backend_mut(),
             crossterm::event::DisableBracketedPaste,
             LeaveAlternateScreen
         );
         let _ = disable_raw_mode();
+    }
+
+    /// Undoes [`Self::suspend`] and forces a full redraw of whatever the editor left behind.
+    fn resume(&mut self) -> Result<()> {
+        enable_raw_mode().context("enabling raw mode")?;
+        execute!(
+            self.terminal.backend_mut(),
+            EnterAlternateScreen,
+            crossterm::event::EnableBracketedPaste
+        )
+        .context("entering the alternate screen")?;
+        self.terminal.clear().context("clearing the terminal")?;
+        Ok(())
+    }
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        self.suspend();
     }
 }

@@ -137,7 +137,10 @@ fn assert_spilled(t: &TestHarness, content: &str, original: &str) -> String {
 
 #[tokio::test]
 async fn compaction_replaces_the_context_with_a_summary_once_usage_crosses_the_threshold() {
-    let t = TestHarness::open(Provider::DeepSeek).await;
+    let t = TestHarness::open_configured(Provider::DeepSeek, |config| {
+        config.providers.deepseek.context_length = None;
+    })
+    .await;
     std::fs::write(t.workspace.join("notes.txt"), "remember the milk\n").unwrap();
     // 49,100 + 931 reaches the 50,000 fallback threshold, so the next LLM call compacts first.
     push_calls(&t, &[read_call("call_1", "notes.txt")], 49_090);
