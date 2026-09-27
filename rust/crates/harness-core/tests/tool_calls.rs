@@ -136,6 +136,7 @@ async fn reads_a_file_in_the_workspace_and_then_answers() {
             "grep",
             "bash",
             "create_sub_agent",
+            "ask_question",
         ])
     );
     for tool in tools {

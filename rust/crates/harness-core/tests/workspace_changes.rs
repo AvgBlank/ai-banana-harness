@@ -5,7 +5,7 @@ mod common;
 use std::time::{Duration, Instant};
 
 use common::{TEST_API_KEY, TestHarness, fixture};
-use harness_core::{Event, EventKind, Provider, TurnState};
+use harness_core::{Answer, Event, EventKind, Provider, TurnState};
 use serde_json::{Value, json};
 
 /// One DeepSeek tool-call reply asking for `name(arguments)`.
@@ -381,13 +381,45 @@ async fn overlay_bash_patterns_keep_their_written_order() {
     assert!(blocked);
     assert_eq!(content, r#"Blocked by guardrail: bash rule "echo *""#);
 
-    // `ask` behaves as deny until approvals exist.
-    let (content, blocked) = single_call(&t, "bash", json!({"command": "git status"})).await;
-    assert!(blocked);
+    // `ask` raises an approval-required action (ticket 05) rather than blocking outright;
+    // denying it proves the overlay resolved this pattern to `ask`, not allow or deny.
+    t.provider
+        .push_sse(tool_call("bash", json!({"command": "git status"})));
+    t.provider.push_sse(fixture("deepseek_plain.sse"));
+    let session_id = t.harness.create_session().unwrap();
+    let mut turn = t.harness.start_turn(&session_id, "go".to_string());
+    let action_id = loop {
+        let event = turn
+            .events
+            .recv()
+            .await
+            .expect("turn ended before asking approval");
+        if let EventKind::ToolApprovalRequired {
+            action_id, rule, ..
+        } = event.kind
+        {
+            assert_eq!(rule, r#"bash rule "git status*" requires approval"#);
+            break action_id;
+        }
+    };
+    turn.reply(&action_id, Answer::Deny);
+    let mut responses = Vec::new();
+    loop {
+        let event = turn.events.recv().await.expect("turn ended unexpectedly");
+        match event.kind {
+            EventKind::ToolResponse {
+                content, blocked, ..
+            } => responses.push((content, blocked)),
+            EventKind::TurnDone { .. } => break,
+            _ => {}
+        }
+    }
+    assert_eq!(responses.len(), 1, "{responses:?}");
     assert_eq!(
-        content,
-        r#"Blocked by guardrail: bash rule "git status*" requires approval"#
+        responses[0].0,
+        r#"User denied tool call: bash rule "git status*" requires approval"#
     );
+    assert!(responses[0].1);
 
     // The committed denylist is still in force underneath the overlay.
     let (_, blocked) = single_call(&t, "bash", json!({"command": "sudo ls"})).await;

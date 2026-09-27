@@ -83,7 +83,9 @@ pub struct FileChange {
     pub removed: u64,
 }
 
-/// A modal shown over the main screen, closed by Esc.
+/// A modal shown over the main screen, closed by Esc. `Approval` and `Question` are required
+/// actions: Esc on either cancels the whole turn (`Action::Cancel`) rather than a bare close,
+/// because the turn is waiting on this action's reply and must not be left hanging.
 pub enum Overlay {
     Sessions {
         sessions: Vec<Session>,
@@ -91,6 +93,22 @@ pub enum Overlay {
     },
     /// `/help`: commands and key bindings.
     Help,
+    /// A tool call whose permission resolved to `ask`: `a` allow once, `s` allow for session,
+    /// `d` deny.
+    Approval {
+        action_id: String,
+        name: String,
+        arguments: String,
+        rule: String,
+    },
+    /// The root-only question tool's question: a digit key picks a suggested option, or free
+    /// text plus Enter answers directly.
+    Question {
+        action_id: String,
+        question: String,
+        options: Vec<String>,
+        free_text: String,
+    },
 }
 
 pub enum TranscriptItem {
@@ -379,6 +397,42 @@ impl MainState {
                     tokens: self.turn_tokens,
                     duration,
                 }));
+                // Cancelling while a required action is pending resolves it without a reply
+                // (every waiter also selects on the cancellation token); nothing would ever
+                // close this overlay otherwise.
+                if matches!(
+                    self.overlay,
+                    Some(Overlay::Approval { .. } | Overlay::Question { .. })
+                ) {
+                    self.overlay = None;
+                }
+            }
+            EventKind::ToolApprovalRequired {
+                action_id,
+                name,
+                arguments,
+                rule,
+                ..
+            } => {
+                self.overlay = Some(Overlay::Approval {
+                    action_id,
+                    name,
+                    arguments,
+                    rule,
+                });
+            }
+            EventKind::ToolResponseRequired {
+                action_id,
+                question,
+                options,
+                ..
+            } => {
+                self.overlay = Some(Overlay::Question {
+                    action_id,
+                    question,
+                    options,
+                    free_text: String::new(),
+                });
             }
             EventKind::ThreadCreated {
                 thread_id,
@@ -543,7 +597,9 @@ fn apply_thread_event(items: &mut Vec<TranscriptItem>, kind: EventKind) {
         EventKind::TurnCreated { .. }
         | EventKind::TurnDone { .. }
         | EventKind::ThreadCreated { .. }
-        | EventKind::ThreadDone { .. } => {}
+        | EventKind::ThreadDone { .. }
+        | EventKind::ToolApprovalRequired { .. }
+        | EventKind::ToolResponseRequired { .. } => {}
     }
 }
 

@@ -285,6 +285,14 @@ impl TestHarness {
         Self::open_configured(provider, |_| {}).await
     }
 
+    /// Like [`open`](Self::open), but a headless run: questions are auto-answered and `ask`
+    /// rules resolve to deny, both without waiting.
+    pub async fn open_headless(provider: Provider) -> Self {
+        let mut config = Config::embedded_default().unwrap();
+        config.skills.paths.clear();
+        Self::open_with(provider, config, true).await
+    }
+
     /// Like [`open`](Self::open), but lets the test adjust the embedded default config (e.g.
     /// `skills.paths`) before the harness is built.
     pub async fn open_configured(provider: Provider, configure: impl FnOnce(&mut Config)) -> Self {
@@ -293,7 +301,7 @@ impl TestHarness {
         // tests must not depend on (or accidentally pick up) whatever is on the host machine.
         config.skills.paths.clear();
         configure(&mut config);
-        Self::open_with(provider, config).await
+        Self::open_with(provider, config, false).await
     }
 
     /// Like [`open`](Self::open), but layers `user_toml` and `workspace_toml` through
@@ -321,10 +329,10 @@ impl TestHarness {
         })
         .unwrap();
         config.skills.paths.clear();
-        Self::open_with(provider, config).await
+        Self::open_with(provider, config, false).await
     }
 
-    async fn open_with(provider: Provider, mut config: Config) -> Self {
+    async fn open_with(provider: Provider, mut config: Config, headless: bool) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().join("workspace");
         std::fs::create_dir_all(&workspace).unwrap();
@@ -350,6 +358,7 @@ impl TestHarness {
             provider,
             api_key: TEST_API_KEY.to_string(),
             workspace: workspace.clone(),
+            headless,
         })
         .unwrap();
         Self {
@@ -386,6 +395,7 @@ impl TestHarness {
             provider,
             api_key: TEST_API_KEY.to_string(),
             workspace: self.workspace.clone(),
+            headless: false,
         })
         .unwrap()
     }

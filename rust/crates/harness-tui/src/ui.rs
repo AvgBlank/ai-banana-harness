@@ -154,7 +154,79 @@ fn draw_overlay(frame: &mut Frame, overlay: &Overlay) {
     match overlay {
         Overlay::Sessions { sessions, selected } => draw_sessions(frame, sessions, *selected),
         Overlay::Help => draw_help(frame),
+        Overlay::Approval {
+            name,
+            arguments,
+            rule,
+            ..
+        } => draw_approval(frame, name, arguments, rule),
+        Overlay::Question {
+            question,
+            options,
+            free_text,
+            ..
+        } => draw_question(frame, question, options, free_text),
     }
+}
+
+fn draw_approval(frame: &mut Frame, name: &str, arguments: &str, rule: &str) {
+    let area = centered_rect(frame.area(), 70, 40);
+    frame.render_widget(Clear, area);
+    let block = Block::bordered()
+        .title(" Approval required ")
+        .border_style(theme::border_focused())
+        .padding(Padding::uniform(1))
+        .style(theme::base());
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let lines = vec![
+        Line::from(vec![
+            Span::styled("Tool: ", theme::muted()),
+            Span::raw(name.to_string()),
+        ]),
+        Line::from(arguments.to_string()).style(theme::muted()),
+        Line::from(""),
+        Line::from(rule.to_string()).style(theme::error()),
+        Line::from(""),
+        Line::from("a allow once · s allow for session · d deny").style(theme::muted()),
+    ];
+    frame.render_widget(
+        Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
+        inner,
+    );
+}
+
+fn draw_question(frame: &mut Frame, question: &str, options: &[String], free_text: &str) {
+    let area = centered_rect(frame.area(), 70, 50);
+    frame.render_widget(Clear, area);
+    let block = Block::bordered()
+        .title(" Question ")
+        .border_style(theme::border_focused())
+        .padding(Padding::uniform(1))
+        .style(theme::base());
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let mut lines = vec![
+        Line::from(question.to_string()).style(theme::accent_bold()),
+        Line::from(""),
+    ];
+    lines.extend(
+        options
+            .iter()
+            .enumerate()
+            .map(|(i, option)| Line::from(format!("  {}. {option}", i + 1))),
+    );
+    lines.push(Line::from(""));
+    lines.push(Line::from(format!("> {free_text}_")));
+    lines.push(Line::from(""));
+    lines.push(Line::from("digit choose · type + Enter answer freely").style(theme::muted()));
+
+    frame.render_widget(
+        Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
+        inner,
+    );
 }
 
 fn draw_help(frame: &mut Frame) {

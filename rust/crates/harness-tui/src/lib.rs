@@ -20,8 +20,8 @@ use crossterm::terminal::{
 };
 use futures_util::StreamExt;
 use harness_core::{
-    Config, Event as HarnessEvent, EventKind, Harness, HarnessOptions, LAST_PROVIDER_SETTING,
-    Provider, Store, TurnHandle, api_key_from_env, default_db_path,
+    Answer, Config, Event as HarnessEvent, EventKind, Harness, HarnessOptions,
+    LAST_PROVIDER_SETTING, Provider, Store, TurnHandle, api_key_from_env, default_db_path,
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -208,6 +208,15 @@ fn handle_terminal_event(
                 }
                 Ok(Flow::Continue)
             }
+            Action::Reply { action_id, answer } => {
+                if let Some(t) = turn.as_ref() {
+                    t.reply(&action_id, answer);
+                }
+                if let Some(main) = app.main_mut() {
+                    main.close_overlay();
+                }
+                Ok(Flow::Continue)
+            }
             Action::ToggleProvider => {
                 if let Some(h) = harness.as_ref()
                     && let Some(main) = app.main_mut()
@@ -290,6 +299,11 @@ enum Action {
     ConfirmStartup {
         provider: Provider,
         workspace: String,
+    },
+    /// Answers a required action (an approval or a question).
+    Reply {
+        action_id: String,
+        answer: Answer,
     },
 }
 
@@ -406,6 +420,58 @@ fn interpret_overlay_key(overlay: &mut app::Overlay, code: KeyCode) -> Action {
             KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => Action::CloseOverlay,
             _ => Action::None,
         },
+        // Esc cancels the whole turn rather than closing the overlay: the turn is waiting on
+        // this action, and a bare close would leave it parked forever (see `Overlay`'s doc).
+        app::Overlay::Approval { action_id, .. } => match code {
+            KeyCode::Char('a') => Action::Reply {
+                action_id: action_id.clone(),
+                answer: Answer::Allow,
+            },
+            KeyCode::Char('s') => Action::Reply {
+                action_id: action_id.clone(),
+                answer: Answer::AllowForSession,
+            },
+            KeyCode::Char('d') => Action::Reply {
+                action_id: action_id.clone(),
+                answer: Answer::Deny,
+            },
+            KeyCode::Esc => Action::Cancel,
+            _ => Action::None,
+        },
+        app::Overlay::Question {
+            action_id,
+            options,
+            free_text,
+            ..
+        } => match code {
+            KeyCode::Char(c @ '1'..='9') => {
+                let index = c.to_digit(10).unwrap_or(0) as usize;
+                match index.checked_sub(1).and_then(|i| options.get(i)) {
+                    Some(option) => Action::Reply {
+                        action_id: action_id.clone(),
+                        answer: Answer::Text(option.clone()),
+                    },
+                    None => {
+                        free_text.push(c);
+                        Action::None
+                    }
+                }
+            }
+            KeyCode::Backspace => {
+                free_text.pop();
+                Action::None
+            }
+            KeyCode::Char(c) => {
+                free_text.push(c);
+                Action::None
+            }
+            KeyCode::Enter if !free_text.trim().is_empty() => Action::Reply {
+                action_id: action_id.clone(),
+                answer: Answer::Text(free_text.trim().to_string()),
+            },
+            KeyCode::Esc => Action::Cancel,
+            _ => Action::None,
+        },
     }
 }
 
@@ -504,6 +570,7 @@ fn open_harness(
         provider,
         api_key,
         workspace,
+        headless: false,
     })?;
     let session_id = harness.create_session()?;
     Ok((harness, session_id))

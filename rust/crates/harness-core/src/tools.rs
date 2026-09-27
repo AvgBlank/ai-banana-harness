@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use harness_llm::ToolDefinition;
 use harness_tools::{
-    HostToolRequest, PermissionConfig, ToolContext, ToolResult, ToolsConfig, sanitize_name,
-    strip_schema,
+    AskOverrides, HostToolRequest, PermissionConfig, ToolContext, ToolResult, ToolsConfig,
+    sanitize_name, strip_schema,
 };
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -106,6 +106,9 @@ pub(crate) struct TurnTools {
     workspace: PathBuf,
     tools_config: ToolsConfig,
     permission: PermissionConfig,
+    /// `ask` rules allowed "for session"; lives as long as the harness (shared across turns),
+    /// not just this one.
+    ask_overrides: Arc<AskOverrides>,
 }
 
 impl TurnTools {
@@ -116,6 +119,7 @@ impl TurnTools {
         workspace: PathBuf,
         tools_config: ToolsConfig,
         permission: PermissionConfig,
+        ask_overrides: Arc<AskOverrides>,
         builtin_definitions: &[ToolDefinition],
     ) -> Self {
         let mut definitions = Vec::new();
@@ -166,10 +170,23 @@ impl TurnTools {
             workspace,
             tools_config,
             permission,
+            ask_overrides,
         }
     }
 
-    pub(crate) async fn call(&self, invocation: ToolInvocation<'_>) -> ToolResult {
+    /// Allows an `ask` rule for the rest of the harness's lifetime (not just this turn).
+    pub(crate) fn allow_for_session(&self, key: &str, pattern: &str) {
+        self.ask_overrides.allow(key, pattern);
+    }
+
+    /// `once_override` bypasses one specific `ask` rule for this single call, without
+    /// remembering it (used for "allow once"); `None` checks normally, which also covers "allow
+    /// for session" once [`Self::allow_for_session`] has recorded it.
+    pub(crate) async fn call(
+        &self,
+        invocation: ToolInvocation<'_>,
+        once_override: Option<(String, String)>,
+    ) -> ToolResult {
         let ToolInvocation {
             name,
             arguments_json,
@@ -184,13 +201,24 @@ impl TurnTools {
                 );
                 let tools_config = self.tools_config.clone();
                 let permission = self.permission.clone();
+                let ask_overrides = Arc::clone(&self.ask_overrides);
                 // Blocking filesystem/process work, on its own OS thread so calls run in parallel.
                 tokio::task::spawn_blocking(move || {
+                    let once;
+                    let ask_overrides: &AskOverrides = match &once_override {
+                        Some((key, pattern)) => {
+                            once = AskOverrides::new();
+                            once.allow(key, pattern);
+                            &once
+                        }
+                        None => &ask_overrides,
+                    };
                     let ctx = ToolContext {
                         workspace: &workspace,
                         tools: &tools_config,
                         permission: &permission,
                         hidden_env: &[crate::API_KEY_ENV],
+                        ask_overrides,
                     };
                     harness_tools::call_by_name(
                         &ctx,
