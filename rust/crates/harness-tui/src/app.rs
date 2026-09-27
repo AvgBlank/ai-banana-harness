@@ -42,6 +42,10 @@ pub struct MainState {
     pub overlay: Option<Overlay>,
     /// Refreshed from `Harness::mcp_status` as turn events arrive.
     pub mcp: Vec<McpServerStatus>,
+    /// The context's size as of the last LLM call or compaction.
+    pub context_tokens: u64,
+    /// The size at which the context gets compacted; the usage bar is hidden until it's known.
+    pub context_limit: Option<u64>,
 }
 
 /// A picker shown over the main screen, closed by resuming a choice or by Esc.
@@ -166,6 +170,8 @@ impl MainState {
             last_error: None,
             overlay: None,
             mcp: Vec::new(),
+            context_tokens: 0,
+            context_limit: None,
         }
     }
 
@@ -175,6 +181,7 @@ impl MainState {
         self.input.clear();
         self.turn_running = false;
         self.last_error = None;
+        self.context_tokens = 0;
         self.push_system_message("Started a new session.".to_string());
     }
 
@@ -200,6 +207,7 @@ impl MainState {
         self.input.clear();
         self.turn_running = false;
         self.last_error = None;
+        self.context_tokens = 0;
         self.push_system_message(format!("Resumed session: {label}"));
     }
 
@@ -257,9 +265,16 @@ impl MainState {
                 message_id,
                 message: Some(output),
             } => {
+                if let Some(usage) = &output.usage {
+                    self.context_tokens = usage.prompt_tokens + usage.completion_tokens;
+                }
                 if let Some(message) = self.assistant_message_mut(&thread_id, &message_id) {
                     message.content = output.content;
                 }
+            }
+            EventKind::ContextCompacted { usage, .. } => {
+                self.context_tokens = usage.prompt_tokens + usage.completion_tokens;
+                self.push_system_message("⟳ context compacted".to_string());
             }
             EventKind::TurnDone { state, error } => {
                 self.turn_running = false;

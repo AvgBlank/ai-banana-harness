@@ -236,8 +236,12 @@ fn draw_status(frame: &mut Frame, state: &MainState, area: Rect) {
         theme::muted()
     };
     let mcp = mcp_status_line(state);
-    let [left, right] = Layout::horizontal([
+    // The context bar only takes space once a threshold is known (it needs a completed LLM
+    // call or a config-provided context length; see `Harness::compaction_threshold`).
+    let context_width = if state.context_limit.is_some() { 20 } else { 0 };
+    let [left, middle, right] = Layout::horizontal([
         Constraint::Min(0),
+        Constraint::Length(context_width),
         Constraint::Length(u16::try_from(mcp.width()).unwrap_or(u16::MAX)),
     ])
     .areas(area);
@@ -245,6 +249,14 @@ fn draw_status(frame: &mut Frame, state: &MainState, area: Rect) {
         Paragraph::new(text).style(style).alignment(Alignment::Left),
         left,
     );
+    if let Some(limit) = state.context_limit {
+        frame.render_widget(
+            Paragraph::new(context_bar(state.context_tokens, limit))
+                .style(theme::muted())
+                .alignment(Alignment::Right),
+            middle,
+        );
+    }
     frame.render_widget(Paragraph::new(mcp).alignment(Alignment::Right), right);
 }
 
@@ -263,6 +275,17 @@ fn mcp_status_line(state: &MainState) -> Line<'static> {
         spans.push(Span::styled(format!(" {} {mark}", server.name), style));
     }
     Line::from(spans)
+}
+
+/// `ctx ■■■□□□□□□□ 34%`, where 100% is the compaction threshold.
+fn context_bar(tokens: u64, limit: u64) -> String {
+    let percent = (tokens * 100).checked_div(limit).unwrap_or(0).min(100);
+    let filled = (percent / 10) as usize;
+    format!(
+        "ctx {}{} {percent}%",
+        "■".repeat(filled),
+        "□".repeat(10 - filled)
+    )
 }
 
 /// A collapsed one-line tool card: the call, and its outcome once known. A blocked call gets a

@@ -171,6 +171,7 @@ fn handle_terminal_event(
                     *session_id = id;
                     if let Some(main) = app.main_mut() {
                         main.resume_session(session);
+                        main.context_limit = Some(h.compaction_threshold(main.provider));
                     }
                 }
                 Ok(false)
@@ -191,6 +192,7 @@ fn handle_terminal_event(
                     };
                     h.switch_provider(session_id, next)?;
                     main.set_provider(next);
+                    main.context_limit = Some(h.compaction_threshold(next));
                 }
                 Ok(false)
             }
@@ -211,6 +213,7 @@ fn handle_terminal_event(
                         app.enter_main(provider, path);
                         if let Some(main) = app.main_mut() {
                             main.mcp = opened.mcp_status();
+                            main.context_limit = Some(opened.compaction_threshold(provider));
                         }
                         *harness = Some(opened);
                         *session_id = sid;

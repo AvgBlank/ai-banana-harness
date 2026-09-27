@@ -103,6 +103,23 @@ impl Key {
 
 const CONFINEMENT: &str = "workspace confinement";
 
+pub(crate) struct InternalPath<'a> {
+    pub workspace: &'a Path,
+    pub requested: &'a Path,
+}
+
+/// Resolves an internal output path while keeping it inside the workspace.
+pub(crate) fn confine(path: InternalPath<'_>) -> Result<PathBuf, String> {
+    let workspace = path.workspace
+        .canonicalize()
+        .map_err(|_| CONFINEMENT.to_string())?;
+    let resolved = resolve(&workspace, path.requested).ok_or_else(|| CONFINEMENT.to_string())?;
+    if !resolved.starts_with(&workspace) {
+        return Err(CONFINEMENT.to_string());
+    }
+    Ok(resolved)
+}
+
 impl PermissionConfig {
     fn rules(&self, key: Key) -> &Rules {
         match key {

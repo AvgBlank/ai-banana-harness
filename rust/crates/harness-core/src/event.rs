@@ -53,6 +53,9 @@ pub enum EventKind {
         content: String,
         blocked: bool,
     },
+    /// The thread's context was replaced by a summary; `usage` is the compacted context's size.
+    #[serde(rename = "context.compacted")]
+    ContextCompacted { thread_id: String, usage: Usage },
 }
 
 impl EventKind {
@@ -65,6 +68,7 @@ impl EventKind {
             EventKind::ModelMessageDelta { .. } => "model.message.delta",
             EventKind::ToolCall { .. } => "tool.call",
             EventKind::ToolResponse { .. } => "tool.response",
+            EventKind::ContextCompacted { .. } => "context.compacted",
         }
     }
 
@@ -74,7 +78,8 @@ impl EventKind {
             EventKind::ModelMessage { thread_id, .. }
             | EventKind::ModelMessageDelta { thread_id, .. }
             | EventKind::ToolCall { thread_id, .. }
-            | EventKind::ToolResponse { thread_id, .. } => Some(thread_id),
+            | EventKind::ToolResponse { thread_id, .. }
+            | EventKind::ContextCompacted { thread_id, .. } => Some(thread_id),
             EventKind::TurnCreated { .. } | EventKind::TurnDone { .. } => None,
         }
     }

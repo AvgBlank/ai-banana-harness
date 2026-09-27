@@ -33,6 +33,10 @@ pub struct ProviderConfig {
     pub model: String,
     pub temperature: f64,
     pub seed: Option<u64>,
+    /// The model's context window in tokens. Unset, compaction falls back to a fixed threshold.
+    pub context_length: Option<u64>,
+    /// Tokens reserved for the model's reply, which lowers the compaction threshold.
+    pub max_output: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
