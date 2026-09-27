@@ -1,6 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use harness_core::{Event, EventKind, ModelOutput, Provider, TurnState};
+use harness_core::{
+    Event, EventKind, McpServerState, McpServerStatus, ModelOutput, Provider, TurnState,
+};
 use harness_tui::app::App;
 use harness_tui::ui;
 use ratatui::Terminal;
@@ -233,4 +235,31 @@ fn an_expanded_bash_card_shows_the_last_40_lines_and_the_exit_code() {
     assert!(view.contains("│    line 6 "), "{view}");
     assert!(view.contains("line 45"), "{view}");
     assert!(view.contains("exit code: 101"), "{view}");
+}
+
+#[test]
+fn the_status_line_shows_each_mcp_servers_state() {
+    let mut app = App::new_main(Provider::DeepSeek, std::env::temp_dir());
+    let main = app.main_mut().unwrap();
+    main.mcp = vec![
+        McpServerStatus {
+            name: "eager".to_string(),
+            state: McpServerState::Connected { tools: 3 },
+        },
+        McpServerStatus {
+            name: "lazy".to_string(),
+            state: McpServerState::Idle,
+        },
+        McpServerStatus {
+            name: "broken".to_string(),
+            state: McpServerState::Failed("boom".to_string()),
+        },
+    ];
+
+    let view = rendered(&app);
+    let status_row = view.lines().last().unwrap();
+    assert!(
+        status_row.contains("mcp: eager ● lazy ○ broken ✗"),
+        "{view}"
+    );
 }

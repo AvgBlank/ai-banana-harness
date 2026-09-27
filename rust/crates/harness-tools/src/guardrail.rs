@@ -21,7 +21,7 @@ pub enum Action {
 /// One key's `(pattern, action)` rules in declaration order. In TOML it is either a bare action
 /// (shorthand for `{"*" = action}`) or a table of `pattern = action`. A subject no pattern
 /// matches is allowed: the committed default is autonomous.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Rules(pub Vec<(String, Action)>);
 
 impl Rules {
@@ -66,7 +66,8 @@ impl<'de> Deserialize<'de> for Rules {
 
 /// The `[permission]` config section. Patterns match the workspace-relative path for `read` and
 /// `edit` (which covers `write_file` too), the command for `bash`, the search pattern for `glob`
-/// and `grep`, and the absolute path for `external_directory`.
+/// and `grep`, the absolute path for `external_directory`, and an MCP tool's own (underlying)
+/// name for `mcp`.
 #[derive(Clone, Debug, Deserialize)]
 pub struct PermissionConfig {
     pub read: Rules,
@@ -75,6 +76,10 @@ pub struct PermissionConfig {
     pub grep: Rules,
     pub bash: Rules,
     pub external_directory: Rules,
+    /// Absent from a config layer (e.g. the committed default has no `[permission.mcp]`) means
+    /// no MCP-specific rules: every tool is allowed, same as any other unmatched subject.
+    #[serde(default)]
+    pub mcp: Rules,
 }
 
 #[derive(Clone, Copy)]
@@ -112,6 +117,13 @@ impl PermissionConfig {
     pub(crate) fn check(&self, key: Key, subject: &str) -> Result<(), String> {
         let (action, pattern) = self.rules(key).decide(subject);
         verdict(key.name(), action, pattern)
+    }
+
+    /// Checks an MCP tool call by the underlying tool's own name (not the deferred `call_tool`
+    /// meta-tool's name). `ask` is treated as deny until approvals exist (ticket 05).
+    pub fn check_mcp(&self, tool_name: &str) -> Result<(), String> {
+        let (action, pattern) = self.mcp.decide(tool_name);
+        verdict("mcp", action, pattern)
     }
 
     /// Checks the whole command and each `&&`/`||`/`;`/`|`/newline-separated segment, and the

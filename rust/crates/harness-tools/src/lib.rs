@@ -1,7 +1,8 @@
 //! Host tools the agent can call: `read_file`, `write_file`, `edit`, `glob`, `grep` and `bash`,
-//! each gated by the [`guardrail`] permission engine. Ticket 10 adds MCP tools. Per the spec,
-//! dispatch across all tool sources is by enumeration, not trait objects — [`HostTool`] is that
-//! enumeration for this crate.
+//! each gated by the [`guardrail`] permission engine. Per the spec, dispatch across all tool
+//! sources is by enumeration, not trait objects — [`HostTool`] is that enumeration for this
+//! crate; `harness-core` routes MCP tools through the same
+//! [`sanitize_name`]/[`strip_schema`]/[`ToolResult`].
 
 mod bash;
 mod edit;
@@ -127,7 +128,7 @@ pub struct ToolResult {
 }
 
 impl ToolResult {
-    fn ok(content: impl Into<String>) -> Self {
+    pub fn ok(content: impl Into<String>) -> Self {
         Self {
             content: content.into(),
             blocked: false,
@@ -136,7 +137,7 @@ impl ToolResult {
 
     /// A tool-level failure (bad arguments, missing file, ...), rendered like the reference
     /// implementation's tool errors: `{"error": message}`.
-    fn error(message: impl AsRef<str>) -> Self {
+    pub fn error(message: impl AsRef<str>) -> Self {
         Self {
             content: serde_json::json!({ "error": message.as_ref() }).to_string(),
             blocked: false,
@@ -145,7 +146,7 @@ impl ToolResult {
 
     /// A guardrail rejection. The exact wording is part of the contract the model is told to
     /// expect.
-    fn blocked(rule: &str) -> Self {
+    pub fn blocked(rule: &str) -> Self {
         Self {
             content: format!("Blocked by guardrail: {rule}"),
             blocked: true,
@@ -172,8 +173,8 @@ pub struct ToolSpec {
     pub parameters: Value,
 }
 
-/// Every host tool's [`ToolSpec`], names de-duplicated within the batch. MCP tools (ticket 10)
-/// go through the same [`sanitize_name`]/[`strip_schema`] before being appended to this list.
+/// Every host tool's [`ToolSpec`], names de-duplicated within the batch. `harness-core` seeds
+/// its own name pool with these before sanitising MCP and meta-tool names.
 pub fn host_tool_specs() -> Vec<ToolSpec> {
     let mut used = HashSet::new();
     HostTool::ALL
@@ -188,7 +189,7 @@ pub fn host_tool_specs() -> Vec<ToolSpec> {
 
 /// Sanitises to `[A-Za-z0-9_-]`, caps at 64 characters, and de-duplicates within `used` with a
 /// numeric suffix (1-50), matching the reference implementation's `getUniqueSanitizedToolName`.
-fn sanitize_name(name: &str, used: &mut HashSet<String>) -> String {
+pub fn sanitize_name(name: &str, used: &mut HashSet<String>) -> String {
     let cleaned: String = name
         .chars()
         .map(|c| {
@@ -221,7 +222,7 @@ fn sanitize_name(name: &str, used: &mut HashSet<String>) -> String {
 
 /// Keeps only `properties` and `required` from a tool's JSON schema (defaulting to `{}`/`[]`),
 /// dropping `$defs`, `additionalProperties` and everything else a provider doesn't need.
-fn strip_schema(schema: &Value) -> Value {
+pub fn strip_schema(schema: &Value) -> Value {
     let object = schema.as_object();
     let properties = object
         .and_then(|o| o.get("properties"))

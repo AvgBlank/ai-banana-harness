@@ -58,3 +58,17 @@ external_directory = "deny"
 "shutdown*" = "deny"
 "reboot*" = "deny"
 "chmod -R 777 /*" = "deny"
+
+# MCP servers. `preload = true` registers a server's tools directly; any other server sits
+# behind the list_tools/get_tool_info/call_tool meta-tools and is started only when a call
+# targets it. `{env:VAR}` in `env` values is expanded when the server starts.
+# [mcp.fs]
+# type = "local"
+# command = ["npx", "-y", "@modelcontextprotocol/server-filesystem", "."]
+# env = {}
+# preload = false
+# description = "Filesystem access"
+#
+# MCP tools are matched by tool name; the last matching pattern wins.
+# [permission.mcp]
+# "delete_*" = "deny"

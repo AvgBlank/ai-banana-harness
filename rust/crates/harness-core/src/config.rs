@@ -1,8 +1,10 @@
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 use std::str::FromStr;
 
 use anyhow::{Context, Result, bail};
+use harness_mcp::McpServerConfig;
 use serde::Deserialize;
 
 const DEFAULT_CONFIG: &str = include_str!("../../../config/default.toml");
@@ -14,6 +16,9 @@ pub struct Config {
     pub skills: SkillsConfig,
     pub tools: harness_tools::ToolsConfig,
     pub permission: harness_tools::PermissionConfig,
+    /// `[mcp.<name>]` servers, keyed by name.
+    #[serde(default)]
+    pub mcp: BTreeMap<String, McpServerConfig>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
