@@ -9,10 +9,11 @@ GUI := gui
 PNPM ?= pnpm
 TARGET_DIR := $(or $(CARGO_TARGET_DIR),target)
 SIDECAR_DEBUG := $(abspath $(TARGET_DIR)/debug/banana-harness)
+SIDECAR_RELEASE := $(abspath $(TARGET_DIR)/release/banana-harness)
 FAKE_PROVIDER_DEBUG := $(abspath $(TARGET_DIR)/debug/fake-provider)
 
 .PHONY: setup run test lint clean check-cc install-rust \
-        gui-setup gui-sidecar gui-dev gui-build gui-lint gui-test gui-e2e gui-leak-scan gui-clean gui-maybe-lint gui-maybe-test
+        gui-setup gui-sidecar gui-dev gui-build gui-lint gui-test gui-e2e gui-leak-scan gui-package gui-package-smoke gui-clean gui-maybe-lint gui-maybe-test
 
 setup: check-cc install-rust
 	$(CARGO) build --release --locked
@@ -89,6 +90,23 @@ gui-e2e: gui-sidecar
 # Fails when the fixed test key is in the test results; run after gui-e2e, before uploading them.
 gui-leak-scan:
 	node $(GUI)/scripts/scan-test-results.mjs $(GUI)/test-results
+
+# The unsigned macOS app for this Mac's architecture (arm64 only): the release sidecar is staged in
+# the bundle (built with this machine's paths remapped out of it), then the DMG and ZIP in
+# gui/dist/ are checked.
+gui-package:
+	@[ "$$(uname -s)" = Darwin ] || { echo "error: gui-package builds the macOS app and only runs on macOS." >&2; exit 1; }
+	@[ "$$(uname -m)" = arm64 ] || { echo "error: gui-package builds arm64 only; this Mac is $$(uname -m)." >&2; exit 1; }
+	RUSTFLAGS="--remap-path-prefix=$(CURDIR)=. --remap-path-prefix=$(HOME)=~" $(CARGO) build --release --locked --bin banana-harness
+	node $(GUI)/scripts/copy-sidecar.mjs $(SIDECAR_RELEASE)
+	$(PNPM) --dir $(GUI) build
+	$(PNPM) --dir $(GUI) exec electron-builder --mac dmg zip --arm64 --publish never
+	node $(GUI)/scripts/verify-package.mjs
+
+# Launches the app made by gui-package through Playwright: its window and a ready sidecar.
+gui-package-smoke:
+	@[ "$$(uname -s)" = Darwin ] || { echo "error: gui-package-smoke runs the macOS app and only runs on macOS." >&2; exit 1; }
+	$(PNPM) --dir $(GUI) exec playwright test -c playwright.packaged.config.ts
 
 gui-clean:
 	rm -rf $(GUI)/out $(GUI)/dist $(GUI)/build/sidecar $(GUI)/test-results $(GUI)/playwright-report

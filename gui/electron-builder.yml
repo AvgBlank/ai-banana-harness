@@ -1,10 +1,22 @@
-# Packaging skeleton. The tool and the macOS targets arrive with the packaging work; the bundle
-# identifier must stay equal to `appId` in package.json (scripts/check-versions.mjs checks it).
+# The bundle identifier must stay equal to `appId` in package.json (scripts/check-versions.mjs checks
+# it). macOS arm64 only, unsigned and not notarized: v1 has no credentials and no auto-update.
 appId: io.github.avgblank.banana-harness
 productName: Banana Harness
 directories:
   output: dist
+  buildResources: build
 files:
   - out/**
+  - package.json
+# `make gui-package` stages the release sidecar in build/sidecar (scripts/copy-sidecar.mjs).
+extraResources:
+  - from: build/sidecar
+    to: bin
 mac:
+  target: [dmg, zip]
+  icon: icon.icns
+  category: public.app-category.developer-tools
   identity: null
+  artifactName: "${productName}-${version}-${arch}-mac.${ext}"
+dmg:
+  artifactName: "${productName}-${version}-${arch}.${ext}"

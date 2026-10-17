@@ -4,6 +4,8 @@ const ci = Boolean(process.env.CI);
 
 export default defineConfig({
   testDir: "tests/e2e",
+  // The packaged app needs a build; `make gui-package-smoke` runs it with its own config.
+  testIgnore: "packaged.spec.ts",
   outputDir: "test-results",
   timeout: 90_000,
   expect: { timeout: 15_000 },

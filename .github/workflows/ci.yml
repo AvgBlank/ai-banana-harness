@@ -94,3 +94,45 @@ jobs:
           path: gui/test-results
           if-no-files-found: ignore
           retention-days: 7
+
+  # The unsigned macOS app: arm64 only, because macos-latest is arm64 and v1 builds the host's
+  # architecture. It runs on pushes to main and by hand, after the other jobs pass; nothing is
+  # uploaded unless the package, its checks and the packaged-app smoke test all succeeded.
+  package:
+    name: macOS package (unsigned)
+    needs: [check, gui]
+    if: github.event_name != 'pull_request'
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      REQUIRE_GUI: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the toolchain pinned by rust-toolchain.toml
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: gui/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: gui/.node-version
+          cache: pnpm
+          cache-dependency-path: gui/pnpm-lock.yaml
+      - name: Cache the Electron binary
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('gui/pnpm-lock.yaml') }}
+      - run: make gui-setup
+      - run: make gui-package
+      - run: make gui-package-smoke
+      - name: Upload the unsigned DMG and ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: banana-harness-macos-arm64-unsigned
+          path: |
+            gui/dist/*-arm64.dmg
+            gui/dist/*-arm64-mac.zip
+          if-no-files-found: error
+          retention-days: 14

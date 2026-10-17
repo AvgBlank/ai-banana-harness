@@ -1,7 +1,8 @@
 # Banana Harness
 
-A local-first, terminal-first coding-agent harness: one binary, a ratatui **TUI** and a
-**headless run**, driving DeepSeek or Qwen to resolve a GitHub issue in a local repository.
+A local-first, terminal-first coding-agent harness: one binary with a ratatui **TUI** and a
+**headless run**, plus a macOS **desktop app** that drives the same binary, all driving DeepSeek or
+Qwen to resolve a GitHub issue in a local repository.
 
 The code is a Cargo workspace at the repository root (`crates/`). The design is in `.scratch/banana-harness/spec.md`,
 the vocabulary in `CONTEXT.md`, and the key decisions in `docs/adr/`.
@@ -28,6 +29,32 @@ commands in the workspace until it resolves it, streaming every step into the TU
 small fixture repository with one failing test) against each provider, skipping the one that
 rejects the key. `make clean` removes
 build artefacts.
+
+## Desktop app
+
+The desktop app is an optional macOS window over the same engine: a session list grouped by
+workspace, a live transcript with tool cards, a Changes panel, and approval dialogs. It needs
+Node 24 and pnpm; the evaluator quickstart above needs neither.
+
+    make gui-setup     # Node 24 check, locked install, fetch the Electron binary
+    make gui-dev       # run the app against a debug build (AI_API_KEY comes from your shell)
+    make gui-package   # macOS (Apple silicon) only: an unsigned DMG and ZIP in gui/dist/
+
+The app reads the key from `AI_API_KEY` like everything else. Launched from a terminal it uses that
+environment; launched from the Dock it also looks in your login shell, and otherwise lets you paste a
+key that is kept in memory for that session only. It never stores the key.
+
+A workspace with its own `.banana-harness/config.toml` opens in **restricted mode**: that file can
+start programs, loosen guardrails and change where your key is sent, so it is ignored until you
+review and trust that exact file. Trust is remembered per file content; if the file changes you are
+asked again. A provider that points anywhere other than the baseline, or at a non-HTTPS address
+that is not loopback, is blocked.
+
+Version 1 is macOS on Apple silicon only, and the package is neither signed nor notarized. macOS
+blocks a copy that came from the internet: with the quarantine attribute set the app does not open.
+Remove the attribute once, then open it as usual (a copy you built yourself is not affected):
+
+    xattr -d com.apple.quarantine "Banana Harness.app"
 
 ## Configuration
 
