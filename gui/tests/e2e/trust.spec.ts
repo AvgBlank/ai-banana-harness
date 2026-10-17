@@ -75,6 +75,8 @@ test("a workspace MCP command never runs while restricted, and a key leak is fla
 
   await sendPrompt(app.page, "say hi");
   await expect(app.page.getByText("Done.")).toBeVisible();
+  // The turn has ended, not only its text: quitting while it ends would ask first.
+  await expect(app.page.getByRole("button", { name: "Stop" })).toBeHidden();
   expect(existsSync(marker)).toBe(false);
 });
 

@@ -159,7 +159,16 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
           });
       }
     }
-    for (const app of running) await app.close().catch(() => undefined);
+    // A turn can still be ending when a test is done, and quitting then asks to confirm: answer
+    // Quit, or the native dialog would wait for ever. The resilience tests set their own answers.
+    for (const app of running) {
+      await app
+        .evaluate(({ dialog }) => {
+          dialog.showMessageBox = (async () => ({ response: 0, checkboxChecked: false })) as never;
+        })
+        .catch(() => undefined);
+      await app.close().catch(() => undefined);
+    }
   },
 });
 
