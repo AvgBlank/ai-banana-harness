@@ -10,6 +10,8 @@ const stored = z.object({
   theme: z.enum(["system", "dark", "light"]).optional(),
   sidebarOpen: z.boolean().optional(),
   changesOpen: z.boolean().optional(),
+  changesScope: z.enum(["turn", "workspace"]).optional(),
+  changesWidth: z.number().int().min(360).max(760).optional(),
   lastWorkspace: path.nullable().optional(),
   recents: z.array(path).optional(),
 });
@@ -18,6 +20,8 @@ export const DEFAULT_PREFS: Prefs = {
   theme: "dark",
   sidebarOpen: true,
   changesOpen: false,
+  changesScope: "turn",
+  changesWidth: 480,
   lastWorkspace: null,
   recents: [],
 };
@@ -43,10 +47,10 @@ export class Preferences {
 
   /** What the renderer may change: appearance and panel state. */
   async set(patch: PrefsPatch): Promise<Prefs> {
-    const { theme, sidebarOpen, changesOpen } = patch;
+    const { theme, sidebarOpen, changesOpen, changesScope, changesWidth } = patch;
     return this.save({
       ...(await this.get()),
-      ...definedOnly({ theme, sidebarOpen, changesOpen }),
+      ...definedOnly({ theme, sidebarOpen, changesOpen, changesScope, changesWidth }),
     });
   }
 

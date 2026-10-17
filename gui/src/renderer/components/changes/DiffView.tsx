@@ -2,6 +2,9 @@ import { useMemo } from "react";
 import { cn } from "@/lib/cn";
 import { parseDiff } from "@/state/diff";
 
+/** More rows than this are windowed with `content-visibility`. */
+export const WINDOW_AFTER_ROWS = 300;
+
 export function DiffView({
   patch,
   truncated,
@@ -12,6 +15,8 @@ export function DiffView({
   className?: string;
 }) {
   const { lines } = useMemo(() => parseDiff(patch), [patch]);
+  // Long diffs let the browser skip the rows that are off screen.
+  const windowed = lines.length > WINDOW_AFTER_ROWS;
   return (
     <section
       className={cn("overflow-x-auto font-mono text-[12.5px] leading-[1.65]", className)}
@@ -23,6 +28,7 @@ export function DiffView({
           key={i}
           className={cn(
             "grid min-w-max grid-cols-[44px_44px_3px_1fr]",
+            windowed && "[contain-intrinsic-size:auto_21px] [content-visibility:auto]",
             l.kind === "add" && "bg-add-bg",
             l.kind === "del" && "bg-del-bg",
             l.kind === "hunk" && "bg-hunk text-muted",

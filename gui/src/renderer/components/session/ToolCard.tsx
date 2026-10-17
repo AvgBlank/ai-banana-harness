@@ -15,9 +15,11 @@ import {
 } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { DiffView } from "@/components/changes/DiffView";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import { clipOutput } from "@/state/output";
 import type { ToolItem } from "@/state/reduceTurn";
+import { useApp } from "@/state/store";
 
 const ICONS: Record<string, ReactNode> = {
   read_file: <FileText size={15} />,
@@ -42,6 +44,7 @@ export function summaryOf(tool: ToolItem): string {
 }
 
 export function ToolCard({ tool }: { tool: ToolItem }) {
+  const { state, set } = useApp();
   const [open, setOpen] = useState(false);
   const [all, setAll] = useState(false);
   const blocked = tool.state === "blocked";
@@ -133,6 +136,23 @@ export function ToolCard({ tool }: { tool: ToolItem }) {
       {tool.name === "ask_question" && tool.state === "done" && output !== "" && (
         <div className="border-t border-line px-3.5 py-2 text-[12.5px] text-muted">
           Answer: <span className="text-fg">{output}</span>
+        </div>
+      )}
+      {typeof tool.args?.path === "string" && tool.diff && (
+        <div className="flex border-t border-line px-3 py-1.5">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() =>
+              set({
+                changesOpen: true,
+                changesScope: "turn",
+                selectedFile: { ...state.selectedFile, turn: tool.args?.path as string },
+              })
+            }
+          >
+            View in changes
+          </Button>
         </div>
       )}
       {open && !blocked && hasBody && tool.name !== "ask_question" && (

@@ -145,6 +145,15 @@ export function transcriptReducer(state: TranscriptState, action: Action): Trans
   }
 }
 
+/** What the screen's other parts need to know about each frame. */
+export interface FrameInfo {
+  type: string;
+  workspace: string;
+  sessionId: string;
+  /** A response from a tool that can change files. */
+  mutating: boolean;
+}
+
 export interface Transcripts {
   state: TranscriptState;
   /** Loads a session's stored turns (the workspace must be open). */
@@ -152,6 +161,8 @@ export interface Transcripts {
   /** Shows the prompt at once, then asks the sidecar; rejects, with the prompt removed, on failure. */
   send(workspace: string, sessionId: string, input: string): Promise<void>;
   stop(workspace: string, sessionId: string): Promise<void>;
+  /** Applies an event that did not arrive as a frame, such as the `turn.undone` an undo returns. */
+  applyEvent(workspace: string, sessionId: string, turnId: string | null, event: CoreEvent): void;
   /** Answers a required action; it leaves the screen at once, and a refusal from the sidecar changes nothing. */
   reply(workspace: string, sessionId: string, actionId: string, answer: Answer): Promise<void>;
   /** Drops the pending actions the sidecar no longer lists. */
@@ -169,13 +180,15 @@ const schedule = (run: () => void): void => {
  * The transcripts of the sessions the user has looked at. Streamed frames are collected and
  * applied once per animation frame, so a fast stream costs one render per frame.
  */
-export function useTranscripts(onTurnEdge: () => void): Transcripts {
+export function useTranscripts(onFrame: (info: FrameInfo) => void): Transcripts {
   const client = useClient();
   const [state, dispatch] = useReducer(transcriptReducer, emptyTranscripts);
   const queue = useRef<EventFrame[]>([]);
   const scheduled = useRef(false);
-  const edge = useRef(onTurnEdge);
-  edge.current = onTurnEdge;
+  const edge = useRef(onFrame);
+  edge.current = onFrame;
+  // `tool.response` carries no tool name, so the calls are remembered by id.
+  const toolNames = useRef(new Map<string, string>());
 
   useEffect(() => {
     const flush = () => {
@@ -186,14 +199,36 @@ export function useTranscripts(onTurnEdge: () => void): Transcripts {
     };
     return client.onSidecarEvent((frame) => {
       queue.current.push(frame);
-      // The sidebar's auto-title and badges follow a turn's start and end.
-      if (frame.event.type === "turn.created" || frame.event.type === "turn.done") edge.current();
+      const event = frame.event as CoreEvent;
+      if (event.type === "tool.call")
+        toolNames.current.set(String(event.tool_call_id), String(event.name));
+      const name =
+        event.type === "tool.response"
+          ? toolNames.current.get(String(event.tool_call_id))
+          : undefined;
+      edge.current({
+        type: event.type,
+        workspace: frame.workspace,
+        sessionId: frame.session_id,
+        mutating: name === "edit" || name === "write_file" || name === "bash",
+      });
       if (!scheduled.current) {
         scheduled.current = true;
         schedule(flush);
       }
     });
   }, [client]);
+
+  const applyEvent = useCallback(
+    (workspace: string, sessionId: string, turnId: string | null, event: CoreEvent) =>
+      dispatch({
+        type: "frames",
+        frames: [
+          { kind: "event", workspace, session_id: sessionId, turn_id: turnId, event } as EventFrame,
+        ],
+      }),
+    [],
+  );
 
   const reconcileRef = useRef<() => Promise<void>>(async () => undefined);
 
@@ -264,7 +299,7 @@ export function useTranscripts(onTurnEdge: () => void): Transcripts {
     [],
   );
 
-  return { state, load, send, stop, reply, reconcile, markFailed };
+  return { state, load, send, stop, reply, reconcile, applyEvent, markFailed };
 }
 
 /** Every pending action across a session's turns, oldest first. */

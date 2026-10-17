@@ -11,6 +11,8 @@ const basePrefs = {
   theme: "dark" as const,
   sidebarOpen: true,
   changesOpen: false,
+  changesScope: "turn" as const,
+  changesWidth: 480,
   lastWorkspace: null,
   recents: [] as string[],
 };

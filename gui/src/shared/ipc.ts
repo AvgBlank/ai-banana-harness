@@ -51,6 +51,8 @@ export const ipcArgs = {
     theme: z.enum(["system", "dark", "light"]).optional(),
     sidebarOpen: z.boolean().optional(),
     changesOpen: z.boolean().optional(),
+    changesScope: z.enum(["turn", "workspace"]).optional(),
+    changesWidth: z.number().int().min(360).max(760).optional(),
   }),
   keyForSession: z.strictObject({ key: z.string().trim().min(1).max(512) }),
   workspacePath: z.strictObject({ path }),

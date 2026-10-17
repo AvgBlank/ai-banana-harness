@@ -322,3 +322,62 @@ test("a turn that is stopped while it waits closes its dialog", async ({
   await expect(app.page.getByRole("dialog")).toBeHidden();
   await expect(app.page.getByRole("button", { name: "Send" })).toBeVisible();
 });
+
+test("edit-and-undo: the panel shows the edit, Undo restores the file and marks the turn", async ({
+  launch,
+  stub,
+  queueReplies,
+}) => {
+  await queueReplies([
+    {
+      sse: {
+        tool_calls: [
+          { id: "c1", name: "write_file", arguments: { path: "made.txt", content: "hi\n" } },
+        ],
+      },
+    },
+    {
+      sse: {
+        tool_calls: [{ id: "c2", name: "bash", arguments: { command: "touch by-bash.txt" } }],
+      },
+    },
+    { sse: { text: "Wrote made.txt." } },
+  ]);
+  const app = await launch();
+  await openFolder(app, stub);
+  await sendPrompt(app.page, "make a file");
+  const approve = app.page.getByRole("dialog").getByRole("button", { name: "Allow once" });
+  await approve.click();
+  await expect(app.page.getByRole("dialog").getByText("touch by-bash.txt")).toBeVisible();
+  await approve.click();
+  await expect(app.page.getByText("Wrote made.txt.")).toBeVisible();
+  expect(existsSync(join(stub.workspace, "made.txt"))).toBe(true);
+
+  await app.page.getByRole("button", { name: "View changes" }).click();
+  const panel = app.page.getByRole("complementary", { name: "Changes" });
+  await expect(
+    panel.getByRole("list", { name: "Changed files" }).getByText("made.txt"),
+  ).toBeVisible();
+
+  await app.page.getByRole("button", { name: "Undo", exact: true }).click();
+  const dialog = app.page.getByRole("dialog");
+  await expect(dialog.getByText("made.txt")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Keep changes" })).toBeFocused();
+  await dialog.getByRole("button", { name: "Undo turn" }).click();
+
+  await expect(app.page.getByText("Undone", { exact: true })).toBeVisible();
+  await expect(app.page.getByRole("status")).toContainText("still remembers the turn");
+  expect(existsSync(join(stub.workspace, "made.txt"))).toBe(false);
+  expect(existsSync(join(stub.workspace, "by-bash.txt"))).toBe(false);
+  await expect(app.page.getByRole("button", { name: "Undo", exact: true })).toBeHidden();
+
+  // After a reload the replayed event still marks the turn undone, with no Undo offered.
+  await app.page.reload();
+  await app.page
+    .getByRole("complementary", { name: "Workspaces and sessions" })
+    .getByRole("button", { name: /make a file/ })
+    .first()
+    .click();
+  await expect(app.page.getByText("Undone", { exact: true })).toBeVisible();
+  await expect(app.page.getByRole("button", { name: "Undo", exact: true })).toBeHidden();
+});

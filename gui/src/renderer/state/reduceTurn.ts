@@ -81,6 +81,8 @@ export interface TurnView {
   threads: Record<string, ThreadView>;
   /** Oldest first. Gone when answered, when the turn ends, or when the sidecar no longer lists them. */
   pending: PendingAction[];
+  /** The workspace was restored to before this turn (a `turn.undone` event, replayed or live). */
+  undone: boolean;
   startedMs: number | null;
   finishedMs: number | null;
   /** Event ids already applied: applying one twice changes nothing. */
@@ -96,6 +98,7 @@ export function optimisticTurn(input: string): TurnView {
     items: [],
     threads: {},
     pending: [],
+    undone: false,
     startedMs: null,
     finishedMs: null,
     seen: new Set(),
@@ -217,6 +220,9 @@ export function reduceTurn(turn: TurnView, event: CoreEvent): TurnView {
         status: "running",
         startedMs: ulidMs(event.id),
       };
+
+    case "turn.undone":
+      return { ...base, undone: true };
 
     case "model.message": {
       const message = event.message as { content?: unknown } | null | undefined;

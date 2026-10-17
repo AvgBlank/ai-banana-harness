@@ -7,13 +7,18 @@ export interface Prefs {
   theme: Theme;
   sidebarOpen: boolean;
   changesOpen: boolean;
+  /** Which changes the panel shows, and how wide it is (pixels). */
+  changesScope: "turn" | "workspace";
+  changesWidth: number;
   /** The workspace main opened last, and up to ten recent ones, newest first. Main owns both. */
   lastWorkspace: string | null;
   recents: string[];
 }
 
 /** The part of the preferences the renderer may change. */
-export type PrefsPatch = Partial<Pick<Prefs, "theme" | "sidebarOpen" | "changesOpen">>;
+export type PrefsPatch = Partial<
+  Pick<Prefs, "theme" | "sidebarOpen" | "changesOpen" | "changesScope" | "changesWidth">
+>;
 
 export type KeySource = "env" | "login_shell" | "session" | "none";
 

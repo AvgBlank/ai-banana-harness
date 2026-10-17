@@ -282,6 +282,8 @@ test("preferences keep the last workspace, the recents and the panels, and hold 
   });
   expect(Object.keys(stored).sort()).toEqual([
     "changesOpen",
+    "changesScope",
+    "changesWidth",
     "lastWorkspace",
     "recents",
     "sidebarOpen",

@@ -1,14 +1,16 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ChangesPanel, pickFile, totals } from "@/components/changes/ChangesPanel";
 import { ApprovalDialog } from "@/components/dialogs/ApprovalDialog";
 import { QuestionDialog } from "@/components/dialogs/QuestionDialog";
+import { UndoDialog } from "@/components/dialogs/UndoDialog";
 import { HomeScreen } from "@/components/home/HomeScreen";
 import { SessionView } from "@/components/session/SessionView";
 import { SettingsView } from "@/components/settings/SettingsView";
-import { ChangesPlaceholder } from "@/components/shell/ChangesPlaceholder";
 import { IconRail } from "@/components/shell/IconRail";
 import { Sidebar } from "@/components/shell/Sidebar";
 import { TitleBar } from "@/components/shell/TitleBar";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { useChanges } from "@/state/changes";
 import { useClient } from "@/state/client-context";
 import { useSessions } from "@/state/sessions";
 import { StateProvider, useApp } from "@/state/store";
@@ -44,7 +46,19 @@ function Shell({ prefs }: { prefs: Prefs }) {
   const client = useClient();
   const { state, set } = useApp();
   const data = useSessions();
-  const transcripts = useTranscripts(data.reload);
+  const reloadSessions = data.reload;
+  const changesRef = useRef<ReturnType<typeof useChanges> | null>(null);
+  // Sessions refresh at turn edges; changes refresh when a turn ends or a file tool answers.
+  const transcripts = useTranscripts(
+    useCallback(
+      (info) => {
+        if (info.type === "turn.created" || info.type === "turn.done") reloadSessions();
+        if (info.type === "turn.done") changesRef.current?.refresh("both", { immediate: true });
+        else if (info.mutating) changesRef.current?.refresh("both");
+      },
+      [reloadSessions],
+    ),
+  );
   const narrow = useNarrow();
   const now = useNow();
   const [appName, setAppName] = useState("");
@@ -178,6 +192,19 @@ function Shell({ prefs }: { prefs: Prefs }) {
     [client, data, session, state.view],
   );
 
+  const [undo, setUndo] = useState<{
+    confirming: boolean;
+    busy: boolean;
+    error: string | null;
+    hidden: boolean;
+  }>({ confirming: false, busy: false, error: null, hidden: false });
+  const [hints, setHints] = useState<Record<string, string>>({});
+
+  const changes = useChanges(
+    session ? { workspace: session.workspace, sessionId: session.id } : null,
+  );
+  changesRef.current = changes;
+
   const sessionWorkspace = session?.workspace ?? state.workspace;
   const activeTurn = sessionWorkspace ? transcripts.state.active[sessionWorkspace] : undefined;
   const turnRunning = Boolean(
@@ -187,6 +214,61 @@ function Shell({ prefs }: { prefs: Prefs }) {
   );
 
   const changesShown = state.changesOpen && state.view !== "settings";
+  const scopeEntry = changes[state.changesScope];
+  const lastTurn = session ? transcripts.state.turns[session.id]?.at(-1) : undefined;
+  const lastTurnFinished = lastTurn !== undefined && lastTurn.status !== "running";
+  const canUndo =
+    lastTurn !== undefined &&
+    lastTurnFinished &&
+    lastTurn.turnId !== null &&
+    !lastTurn.undone &&
+    !undo.hidden &&
+    changes.turn.checkpoint === true &&
+    !turnRunning;
+
+  const { refresh } = changes;
+  // Opening the panel, switching scope, changing session and returning to the window all ask again.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: these are the triggers
+  useEffect(() => {
+    if (session && state.view === "session") refresh("both", { immediate: true });
+  }, [session?.id, state.view, state.changesScope, changesShown, refresh]);
+  useEffect(() => {
+    const onFocus = () => refresh("both");
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [refresh]);
+  // A new last turn starts with a fresh undo state.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the turn id is the trigger
+  useEffect(() => {
+    setUndo({ confirming: false, busy: false, error: null, hidden: false });
+  }, [session?.id, lastTurn?.turnId]);
+
+  const confirmUndo = useCallback(async () => {
+    if (!session || !lastTurn?.turnId) return;
+    setUndo((u) => ({ ...u, busy: true, error: null }));
+    try {
+      const result = await client.undo(session.workspace, session.id);
+      if (result.outcome === "restored" && result.event) {
+        transcripts.applyEvent(session.workspace, session.id, lastTurn.turnId, result.event);
+        setHints((h) => ({
+          ...h,
+          [session.id]:
+            "The files were restored, but the agent still remembers the turn. Say so in your next message.",
+        }));
+        setUndo({ confirming: false, busy: false, error: null, hidden: false });
+      } else {
+        setUndo({ confirming: false, busy: false, error: null, hidden: true });
+      }
+      refresh("both", { immediate: true });
+    } catch (error) {
+      setUndo({
+        confirming: false,
+        busy: false,
+        error: error instanceof Error ? error.message : "The undo failed.",
+        hidden: false,
+      });
+    }
+  }, [client, lastTurn?.turnId, refresh, session, transcripts]);
   const sidebarShown = state.sidebarOpen && !(narrow && changesShown);
   const recent = [
     ...new Set([
@@ -199,7 +281,10 @@ function Shell({ prefs }: { prefs: Prefs }) {
 
   return (
     <div className="flex h-full flex-col">
-      <TitleBar sessionTitle={session ? (session.title ?? "Untitled session") : null} />
+      <TitleBar
+        sessionTitle={session ? (session.title ?? "Untitled session") : null}
+        totals={changesShown || session ? totals(scopeEntry.files) : null}
+      />
       <div className="flex min-h-0 flex-1">
         <IconRail />
         {sidebarShown && (
@@ -224,7 +309,17 @@ function Shell({ prefs }: { prefs: Prefs }) {
               provider={session.provider}
               onPickProvider={switchProvider}
               keyMissing={key !== null && !key.present}
-              onSend={(text) => transcripts.send(session.workspace, session.id, text)}
+              onSend={(text) => {
+                setHints(({ [session.id]: _gone, ...rest }) => rest);
+                return transcripts.send(session.workspace, session.id, text);
+              }}
+              hint={hints[session.id] ?? null}
+              undo={{
+                canUndo,
+                undoing: undo.busy,
+                error: undo.error,
+                onUndo: () => setUndo((u) => ({ ...u, confirming: true, error: null })),
+              }}
               onStop={() => void transcripts.stop(session.workspace, session.id)}
             />
           ) : (
@@ -243,7 +338,24 @@ function Shell({ prefs }: { prefs: Prefs }) {
             />
           )}
         </main>
-        {changesShown && <ChangesPlaceholder />}
+        {changesShown && (
+          <ChangesPanel
+            scope={state.changesScope}
+            entry={scopeEntry}
+            selectedPath={
+              pickFile(scopeEntry.files, state.selectedFile[state.changesScope])?.path ?? null
+            }
+            lastTurnFinished={lastTurnFinished}
+            width={state.changesWidth}
+            onScope={(changesScope) => set({ changesScope })}
+            onSelect={(path) =>
+              set({ selectedFile: { ...state.selectedFile, [state.changesScope]: path } })
+            }
+            onResize={(changesWidth) => set({ changesWidth })}
+            onRetry={() => refresh(state.changesScope, { immediate: true })}
+            onClose={() => set({ changesOpen: false })}
+          />
+        )}
       </div>
       {session && (
         <>
@@ -255,6 +367,13 @@ function Shell({ prefs }: { prefs: Prefs }) {
             onAnswer={(action, answer) =>
               void transcripts.reply(session.workspace, session.id, action.actionId, answer)
             }
+          />
+          <UndoDialog
+            open={undo.confirming}
+            files={changes.turn.files}
+            busy={undo.busy}
+            onKeep={() => setUndo((u) => ({ ...u, confirming: false }))}
+            onConfirm={() => void confirmUndo()}
           />
           <QuestionDialog
             action={nextAction?.kind === "question" ? nextAction : undefined}

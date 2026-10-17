@@ -51,6 +51,9 @@ export interface Client {
   ): Promise<void>;
   /** Ids of the required actions the sidecar is waiting on, across open workspaces. */
   pendingActionIds(): Promise<string[]>;
+  changesTurn(workspace: string, sessionId: string): Promise<Result<"changes.turn">>;
+  changesWorkspace(workspace: string): Promise<Result<"changes.workspace">>;
+  undo(workspace: string, sessionId: string): Promise<Result<"session.undo">>;
   switchProvider(workspace: string, sessionId: string, provider: string): Promise<Session>;
   /** Every event frame main forwards, already validated. */
   onSidecarEvent(listener: (frame: EventFrame) => void): () => void;
@@ -98,6 +101,9 @@ export function clientFor(banana: BananaApi): Client {
       (await call("workspace.list", {})).workspaces.flatMap(
         (w) => w.active_turn?.pending_action_ids ?? [],
       ),
+    changesTurn: (workspace, session_id) => call("changes.turn", { workspace, session_id }),
+    changesWorkspace: (workspace) => call("changes.workspace", { workspace }),
+    undo: (workspace, session_id) => call("session.undo", { workspace, session_id }),
     switchProvider: async (workspace, session_id, provider) =>
       (
         await call("session.switch_provider", {

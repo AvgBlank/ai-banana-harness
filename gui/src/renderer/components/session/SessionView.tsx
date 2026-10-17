@@ -30,6 +30,8 @@ export function SessionView({
   onSend,
   onStop,
   keyMissing,
+  undo,
+  hint,
 }: {
   turns: TurnView[];
   load: LoadStatus | undefined;
@@ -40,6 +42,9 @@ export function SessionView({
   onSend: (text: string) => Promise<void>;
   onStop: () => void;
   keyMissing: boolean;
+  undo: UndoControls;
+  /** A note under the transcript, e.g. after an undo. */
+  hint: string | null;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const [stuck, setStuck] = useState(true);
@@ -96,7 +101,11 @@ export function SessionView({
               </div>
             )}
             {turns.map((turn, index) => (
-              <TurnBlock key={turn.turnId ?? `pending-${index}`} turn={turn} />
+              <TurnBlock
+                key={turn.turnId ?? `pending-${index}`}
+                turn={turn}
+                undo={index === turns.length - 1 ? undo : null}
+              />
             ))}
           </div>
         </div>
@@ -112,6 +121,11 @@ export function SessionView({
         )}
       </div>
       <div className="mx-auto w-full max-w-[780px] px-6 pb-5">
+        {hint && (
+          <p role="status" className="mb-2 text-[12.5px] text-muted">
+            {hint}
+          </p>
+        )}
         <Composer
           running={running}
           stopping={stopping}
@@ -126,7 +140,15 @@ export function SessionView({
   );
 }
 
-function TurnBlock({ turn }: { turn: TurnView }) {
+/** What the last turn's summary card needs to offer Undo. */
+export interface UndoControls {
+  canUndo: boolean;
+  undoing: boolean;
+  error: string | null;
+  onUndo: () => void;
+}
+
+function TurnBlock({ turn, undo }: { turn: TurnView; undo: UndoControls | null }) {
   const { set } = useApp();
   const streaming = turn.status === "running";
   return (
@@ -150,7 +172,15 @@ function TurnBlock({ turn }: { turn: TurnView }) {
         </div>
       )}
       {turn.status !== "running" && (
-        <TurnSummary summary={summarize(turn)} onViewChanges={() => set({ changesOpen: true })} />
+        <TurnSummary
+          summary={summarize(turn)}
+          undone={turn.undone}
+          canUndo={undo?.canUndo ?? false}
+          undoing={undo?.undoing ?? false}
+          undoError={undo?.error ?? null}
+          onUndo={() => undo?.onUndo()}
+          onViewChanges={() => set({ changesOpen: true, changesScope: "turn" })}
+        />
       )}
       {turn.status === "error" && (
         <div

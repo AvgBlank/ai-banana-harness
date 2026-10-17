@@ -4,7 +4,14 @@ import { Tooltip } from "@/components/ui/tooltip";
 import { folderName } from "@/lib/format";
 import { useApp } from "@/state/store";
 
-export function TitleBar({ sessionTitle }: { sessionTitle: string | null }) {
+export function TitleBar({
+  sessionTitle,
+  totals,
+}: {
+  sessionTitle: string | null;
+  /** The current scope's line counts, shown on the Changes button once there are some. */
+  totals: { added: number; removed: number } | null;
+}) {
   const { state, set } = useApp();
   const workspace = state.workspace ? folderName(state.workspace) : null;
 
@@ -60,6 +67,12 @@ export function TitleBar({ sessionTitle }: { sessionTitle: string | null }) {
             onClick={() => set({ changesOpen: !state.changesOpen })}
           >
             <FileDiff size={15} />
+            {totals && totals.added + totals.removed > 0 && (
+              <>
+                <span className="font-mono text-[11px] text-add-fg">+{totals.added}</span>
+                <span className="font-mono text-[11px] text-del-fg">−{totals.removed}</span>
+              </>
+            )}
           </Button>
         </Tooltip>
       </div>

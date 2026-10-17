@@ -12,6 +12,7 @@ import type { Prefs, PrefsPatch, Theme } from "../../shared/api";
 import { useClient } from "./client-context";
 
 export type { Theme };
+export type ChangesScope = "turn" | "workspace";
 export type View = "home" | "session" | "settings";
 
 /** What the user is looking at; data from the sidecar lives in its own hooks. */
@@ -23,6 +24,10 @@ export interface UiState {
   sessionId: string | null;
   sidebarOpen: boolean;
   changesOpen: boolean;
+  changesScope: ChangesScope;
+  changesWidth: number;
+  /** The file selected in each scope, by path; kept while it stays in the list. */
+  selectedFile: Record<ChangesScope, string | null>;
   modelOpen: boolean;
   workspaceMenuOpen: boolean;
   draft: string;
@@ -37,6 +42,9 @@ export const initialState: UiState = {
   sessionId: null,
   sidebarOpen: true,
   changesOpen: false,
+  changesScope: "turn",
+  changesWidth: 480,
+  selectedFile: { turn: null, workspace: null },
   modelOpen: false,
   workspaceMenuOpen: false,
   draft: "",
@@ -58,7 +66,7 @@ export function StateProvider({
   prefs,
   children,
 }: {
-  prefs: Pick<Prefs, "theme" | "sidebarOpen" | "changesOpen">;
+  prefs: Pick<Prefs, "theme" | "sidebarOpen" | "changesOpen" | "changesScope" | "changesWidth">;
   children: ReactNode;
 }) {
   const client = useClient();
@@ -67,6 +75,8 @@ export function StateProvider({
     theme: prefs.theme,
     sidebarOpen: prefs.sidebarOpen,
     changesOpen: prefs.changesOpen,
+    changesScope: prefs.changesScope,
+    changesWidth: prefs.changesWidth,
   });
   const set = useCallback((patch: Partial<UiState>) => dispatch(patch), []);
 
@@ -79,10 +89,12 @@ export function StateProvider({
     theme: prefs.theme,
     sidebarOpen: prefs.sidebarOpen,
     changesOpen: prefs.changesOpen,
+    changesScope: prefs.changesScope,
+    changesWidth: prefs.changesWidth,
   });
-  const { theme, sidebarOpen, changesOpen } = state;
+  const { theme, sidebarOpen, changesOpen, changesScope, changesWidth } = state;
   useEffect(() => {
-    const now: PrefsPatch = { theme, sidebarOpen, changesOpen };
+    const now: PrefsPatch = { theme, sidebarOpen, changesOpen, changesScope, changesWidth };
     const changed = Object.fromEntries(
       Object.entries(now).filter(
         ([key, value]) => saved.current[key as keyof PrefsPatch] !== value,
@@ -91,7 +103,7 @@ export function StateProvider({
     if (Object.keys(changed).length === 0) return;
     saved.current = now;
     void client.setPrefs(changed).catch(() => undefined);
-  }, [client, theme, sidebarOpen, changesOpen]);
+  }, [client, theme, sidebarOpen, changesOpen, changesScope, changesWidth]);
 
   const value = useMemo(() => ({ state, set }), [state, set]);
   return <StateContext.Provider value={value}>{children}</StateContext.Provider>;

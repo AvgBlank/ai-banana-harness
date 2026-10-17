@@ -10,6 +10,8 @@ const DEFAULT_PREFS: Prefs = {
   theme: "dark",
   sidebarOpen: true,
   changesOpen: false,
+  changesScope: "turn",
+  changesWidth: 480,
   lastWorkspace: null,
   recents: [],
 };

@@ -1,5 +1,6 @@
 import { type Mocked, vi } from "vitest";
 import type { Client, SidecarStatus } from "../../../src/renderer/lib/client";
+import type { FileChange } from "../../../src/renderer/state/changes";
 import type { KeyStatus, Prefs, PrefsPatch } from "../../../src/shared/api";
 import type { EventFrame, ProviderOption, Session } from "../../../src/shared/protocol";
 
@@ -14,10 +15,23 @@ export function session(over: Partial<Session> & Pick<Session, "id" | "workspace
   };
 }
 
+export function fileChange(over: Partial<FileChange> & Pick<FileChange, "path">): FileChange {
+  return {
+    status: "modified",
+    added: 1,
+    removed: 1,
+    patch: "--- a\n+++ b\n@@ -1,1 +1,1 @@\n-old\n+new\n",
+    truncated: false,
+    ...over,
+  };
+}
+
 export const DEFAULT_PREFS: Prefs = {
   theme: "dark",
   sidebarOpen: true,
   changesOpen: false,
+  changesScope: "turn" as const,
+  changesWidth: 480,
   lastWorkspace: null,
   recents: [],
 };
@@ -54,6 +68,8 @@ export function fakeClient(
     picked?: string | null;
     key?: KeyStatus;
     foundOnRecheck?: KeyStatus;
+    turnFiles?: FileChange[];
+    workspaceFiles?: FileChange[];
   } = {},
 ): FakeClient {
   const listeners = new Set<(status: SidecarStatus) => void>();
@@ -112,6 +128,18 @@ export function fakeClient(
         model: provider === "qwen" ? "qwen3.8-flash" : "deepseek-flash",
       }),
     ),
+    changesTurn: vi.fn(async (_w: string, _s: string) => ({
+      checkpoint: true,
+      files: options.turnFiles ?? [],
+    })),
+    changesWorkspace: vi.fn(async (_w: string) => ({
+      git: true,
+      files: options.workspaceFiles ?? [],
+    })),
+    undo: vi.fn(async (_w: string, _s: string) => ({
+      outcome: "restored" as const,
+      event: { id: "undo1", type: "turn.undone", turn_id: "T1" },
+    })),
     onSidecarEvent: vi.fn((listener: (f: EventFrame) => void) => {
       eventListeners.add(listener);
       return () => eventListeners.delete(listener);
