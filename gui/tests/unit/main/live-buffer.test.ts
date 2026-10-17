@@ -91,7 +91,7 @@ describe("LiveBuffers", () => {
     expect(live.attach("/w", "s1")).toEqual({ frames: [f], activeTurnId: null });
   });
 
-  test("an accepted turn.start counts as running before its first frame", () => {
+  test("a turn.start in flight counts as running before its first frame", () => {
     const live = new LiveBuffers();
     live.started("/w", "s1");
     expect(live.running).toBe(true);
@@ -100,5 +100,25 @@ describe("LiveBuffers", () => {
     expect(live.attach("/w", "s1").activeTurnId).toBe("T1");
     live.push(frame("/w", "s1", "T1", "turn.done", { state: "done" }));
     expect(live.running).toBe(false);
+  });
+
+  test("a refused turn.start takes its mark back and restores what was there", () => {
+    const live = new LiveBuffers();
+    live.started("/w", "s1")();
+    expect(live.running).toBe(false);
+
+    live.push(frame("/w", "s1", "T1", "turn.created", { session_id: "s1", turn_id: "T1" }));
+    live.started("/w", "s2")();
+    expect(live.attach("/w", "s1").activeTurnId).toBe("T1");
+  });
+
+  test("frames that end the turn before the mark could be taken back are not undone", () => {
+    const live = new LiveBuffers();
+    const unmark = live.started("/w", "s1");
+    live.push(frame("/w", "s1", "T1", "turn.created", { session_id: "s1", turn_id: "T1" }));
+    live.push(frame("/w", "s1", "T1", "turn.done", { state: "done" }));
+    unmark();
+    expect(live.running).toBe(false);
+    expect(live.attach("/w", "s1").frames).toHaveLength(2);
   });
 });

@@ -45,13 +45,21 @@ export class LiveBuffers {
   }
 
   /**
-   * A `turn.start` was accepted: the turn counts as running before its first frame arrives, so a
-   * quit in that gap still asks.
+   * A `turn.start` is being sent: the turn counts as running before its first frame arrives, so a
+   * quit in that gap still asks. Call it before the request, so frames that follow the reply can
+   * only end it; the returned function takes the mark back if the request is refused.
    */
-  started(workspace: string, sessionId: string): void {
-    const entry = this.entries.get(workspace) ?? { frames: [], bytes: 0, active: null };
+  started(workspace: string, sessionId: string): () => void {
+    const existing = this.entries.get(workspace);
+    const entry = existing ?? { frames: [], bytes: 0, active: null };
+    const before = entry.active;
     entry.active = { sessionId, turnId: null };
     this.entries.set(workspace, entry);
+    return () => {
+      if (entry.active?.turnId !== null) return;
+      entry.active = before;
+      if (!existing && this.entries.get(workspace) === entry) this.entries.delete(workspace);
+    };
   }
 
   /** The buffered frames of one session and whether its turn is the running one, in one step. */

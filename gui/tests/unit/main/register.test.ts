@@ -358,7 +358,7 @@ describe("resilience channels", () => {
     expect(t.live.attach("/picked", "s1").frames).toEqual([]);
   });
 
-  test("an accepted turn.start marks the workspace running, a refused one does not", async () => {
+  test("turn.start marks the workspace running, and a refused one takes the mark back", async () => {
     const t = setup();
     const params = { workspace: "/w", session_id: "s1", input: "go" };
     await t.call(channels.rpcCall, { method: "turn.start", params });
@@ -366,6 +366,31 @@ describe("resilience channels", () => {
     t.live.clear();
     t.request.mockRejectedValueOnce(new RpcError("turn_in_progress", "busy"));
     await t.call(channels.rpcCall, { method: "turn.start", params });
+    expect(t.live.running).toBe(false);
+  });
+
+  test("a turn that starts and ends before the reply is handled does not stay running", async () => {
+    const t = setup({
+      request: (method) => {
+        if (method === "turn.start") {
+          // The frames of a fast turn are handled before the reply's continuation runs.
+          const event = (type: string, extra: Record<string, unknown>) => ({
+            kind: "event" as const,
+            workspace: "/w",
+            session_id: "s1",
+            turn_id: "T1",
+            event: { id: `x-${type}`, type, ...extra },
+          });
+          t.live.push(event("turn.created", { session_id: "s1", turn_id: "T1" }) as never);
+          t.live.push(event("turn.done", { state: "done" }) as never);
+        }
+        return {};
+      },
+    });
+    await t.call(channels.rpcCall, {
+      method: "turn.start",
+      params: { workspace: "/w", session_id: "s1", input: "go" },
+    });
     expect(t.live.running).toBe(false);
   });
 

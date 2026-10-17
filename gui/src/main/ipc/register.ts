@@ -158,9 +158,17 @@ export function registerIpc(deps: IpcDeps): void {
     channels.rpcCall,
     guarded(trust, ipcArgs.rpcCall, async (raw) => {
       const call = parseRpcCall(raw);
-      const result = await supervisor.request(call.method, call.params as never);
-      if (call.method === "turn.start")
-        deps.live.started(call.params.workspace, call.params.session_id);
+      const unmark =
+        call.method === "turn.start"
+          ? deps.live.started(call.params.workspace, call.params.session_id)
+          : undefined;
+      let result: unknown;
+      try {
+        result = await supervisor.request(call.method, call.params as never);
+      } catch (error) {
+        unmark?.();
+        throw error;
+      }
       if (call.method === "session.list") {
         known.learnFromSessions((result as { sessions: Array<{ workspace: string }> }).sessions);
       }
