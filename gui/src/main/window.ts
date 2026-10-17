@@ -30,6 +30,9 @@ export function createWindow(): BrowserWindow {
     // The title comes from the package metadata, not from the page.
     title: app.getName(),
     show: false,
+    // The Codex-style title bar: content runs under it and macOS draws the traffic lights.
+    titleBarStyle: "hiddenInset",
+    trafficLightPosition: { x: 14, y: 14 },
     webPreferences: {
       preload: join(__dirname, "../preload/index.js"),
       contextIsolation: true,

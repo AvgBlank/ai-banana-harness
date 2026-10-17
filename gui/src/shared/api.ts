@@ -1,6 +1,15 @@
 import type { PushName } from "./channels";
 
+export type Theme = "system" | "dark" | "light";
+
+/** What main persists for the user. */
+export interface Prefs {
+  theme: Theme;
+}
+
 export interface AppInfo {
+  /** The product name, from the package metadata; the interface shows it, never spells it. */
+  name: string;
   version: string;
   platform: string;
   protocol: number;
@@ -15,6 +24,11 @@ export interface OpenedWorkspace {
 /** The only object the preload exposes to the renderer as `window.banana`. */
 export interface BananaApi {
   readonly app: { info(): Promise<AppInfo> };
+  readonly prefs: {
+    get(): Promise<Prefs>;
+    /** Merges a patch and returns the stored result; unknown keys are dropped. */
+    set(patch: Partial<Prefs>): Promise<Prefs>;
+  };
   readonly workspace: {
     /** The system folder dialog; `null` when cancelled. */
     pick(): Promise<string | null>;
@@ -29,4 +43,12 @@ export interface BananaApi {
 }
 
 /** The keys of `window.banana`; a new capability is added here and nowhere else. */
-export const bananaKeys = ["app", "workspace", "rpc", "external", "sidecar", "on"] as const;
+export const bananaKeys = [
+  "app",
+  "prefs",
+  "workspace",
+  "rpc",
+  "external",
+  "sidecar",
+  "on",
+] as const;

@@ -6,6 +6,7 @@ import { ExternalLinks } from "./external/links";
 import { KnownWorkspaces } from "./ipc/known";
 import { registerIpc } from "./ipc/register";
 import { installAppProtocol, registerAppScheme } from "./origin";
+import { Preferences } from "./prefs";
 import { sidecarEnv } from "./sidecar/env";
 import { SidecarSupervisor } from "./sidecar/supervisor";
 import { createWindow, denyPermissions, devServer } from "./window";
@@ -65,6 +66,7 @@ function main(): void {
       },
       supervisor,
       known: new KnownWorkspaces(),
+      prefs: new Preferences(join(app.getPath("userData"), "preferences.json")),
       links: new ExternalLinks({
         confirm: async (url) => {
           const options = {
@@ -83,7 +85,7 @@ function main(): void {
         },
         open: (url) => shell.openExternal(url),
       }),
-      appInfo: { version: app.getVersion(), platform: process.platform },
+      appInfo: { name: app.getName(), version: app.getVersion(), platform: process.platform },
       pickFolder: async () => {
         const options = { properties: ["openDirectory" as const] };
         const result = window

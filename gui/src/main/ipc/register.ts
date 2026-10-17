@@ -3,6 +3,7 @@ import { channels } from "../../shared/channels";
 import { IpcError, ipcArgs, parseRpcCall } from "../../shared/ipc";
 import { PROTOCOL_VERSION } from "../../shared/protocol";
 import type { ExternalLinks } from "../external/links";
+import type { Preferences } from "../prefs";
 import type { SidecarSupervisor } from "../sidecar/supervisor";
 import type { KnownWorkspaces } from "./known";
 import type { SenderEvent } from "./sender";
@@ -17,6 +18,7 @@ export interface IpcDeps {
   trust: TrustContext;
   supervisor: Pick<SidecarSupervisor, "request" | "restart" | "setOpenWorkspaces">;
   known: KnownWorkspaces;
+  prefs: Pick<Preferences, "get" | "set">;
   links: ExternalLinks;
   appInfo: Omit<AppInfo, "protocol">;
   /** The system folder dialog; only main ever opens it. */
@@ -30,6 +32,16 @@ export function registerIpc(deps: IpcDeps): void {
   ipc.handle(
     channels.appInfo,
     guardedNoArgs(trust, (): AppInfo => ({ ...deps.appInfo, protocol: PROTOCOL_VERSION })),
+  );
+
+  ipc.handle(
+    channels.prefsGet,
+    guardedNoArgs(trust, () => deps.prefs.get()),
+  );
+
+  ipc.handle(
+    channels.prefsSet,
+    guarded(trust, ipcArgs.prefsPatch, (patch) => deps.prefs.set(patch)),
   );
 
   ipc.handle(

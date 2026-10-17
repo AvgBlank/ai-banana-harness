@@ -7,6 +7,7 @@ export default defineConfig({
   resolve: { alias: { "@": resolve("src/renderer") } },
   test: {
     environment: "jsdom",
+    setupFiles: ["tests/unit/renderer/setup.ts"],
     include: ["tests/unit/**/*.test.{ts,tsx}"],
   },
 });

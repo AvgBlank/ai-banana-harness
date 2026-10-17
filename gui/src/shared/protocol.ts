@@ -114,7 +114,7 @@ const turnRecord = z.object({
   events: z.array(event),
 });
 
-const providerOption = z.object({
+export const providerOption = z.object({
   provider,
   model: z.string(),
   host: z.string(),
@@ -275,6 +275,8 @@ export const eventFrame = z.object({
 /** What the sidecar sends. */
 export const sidecarFrame = z.union([readyFrame, fatalFrame, responseFrame, eventFrame]);
 
+export type Session = z.infer<typeof session>;
+export type ProviderOption = z.infer<typeof providerOption>;
 export type ReadyFrame = z.infer<typeof readyFrame>;
 export type FatalFrame = z.infer<typeof fatalFrame>;
 export type ResponseFrame = z.infer<typeof responseFrame>;

@@ -2,6 +2,8 @@
 
 export const channels = {
   appInfo: "banana:app:info",
+  prefsGet: "banana:prefs:get",
+  prefsSet: "banana:prefs:set",
   workspacePick: "banana:workspace:pick",
   workspaceOpen: "banana:workspace:open",
   rpcCall: "banana:rpc:call",

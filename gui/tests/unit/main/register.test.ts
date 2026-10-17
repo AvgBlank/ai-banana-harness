@@ -41,7 +41,11 @@ function setup(options: { request?: (method: string, params: unknown) => unknown
     supervisor: { request: request as never, restart: vi.fn(), setOpenWorkspaces: vi.fn() },
     known,
     links: new ExternalLinks({ confirm, open }),
-    appInfo: { version: "0.1.0", platform: "darwin" },
+    appInfo: { name: "App", version: "0.1.0", platform: "darwin" },
+    prefs: {
+      get: async () => ({ theme: "dark" as const }),
+      set: async (patch) => ({ theme: "dark" as const, ...patch }),
+    },
     pickFolder: async () => picked,
   });
   const call = (channel: string, arg?: unknown, frame: { url: string } | null = topFrame) =>
@@ -82,7 +86,7 @@ describe("sender checks", () => {
     const t = setup();
     expect(await t.call(channels.appInfo)).toEqual({
       ok: true,
-      value: { version: "0.1.0", platform: "darwin", protocol: 1 },
+      value: { name: "App", version: "0.1.0", platform: "darwin", protocol: 1 },
     });
   });
 });
@@ -206,5 +210,20 @@ describe("external links", () => {
     });
     expect(t.confirm).toHaveBeenCalledTimes(1);
     expect(t.open).toHaveBeenCalledWith("https://example.com/x");
+  });
+});
+
+describe("preferences", () => {
+  test("get and set go through the store, and a patch is validated with unknown keys dropped", async () => {
+    const t = setup();
+    expect(await t.call(channels.prefsGet)).toEqual({ ok: true, value: { theme: "dark" } });
+    expect(await t.call(channels.prefsSet, { theme: "light", evil: 1 })).toEqual({
+      ok: true,
+      value: { theme: "light" },
+    });
+    expect(await t.call(channels.prefsSet, { theme: "purple" })).toMatchObject({
+      ok: false,
+      error: { code: "invalid_arguments" },
+    });
   });
 });

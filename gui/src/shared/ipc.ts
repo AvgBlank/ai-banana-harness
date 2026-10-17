@@ -46,6 +46,8 @@ const MAX_ANSWER_BYTES = 64 * 1024;
 const path = z.string().min(1).max(MAX_STRING_LENGTH);
 
 export const ipcArgs = {
+  /** Unknown keys are dropped, not refused: a newer renderer may send more than main knows. */
+  prefsPatch: z.object({ theme: z.enum(["system", "dark", "light"]).optional() }),
   workspacePath: z.strictObject({ path }),
   rpcCall: z.strictObject({ method: z.string(), params: z.record(z.string(), z.unknown()) }),
   externalOpen: z.strictObject({ url: z.string().min(1).max(MAX_STRING_LENGTH) }),

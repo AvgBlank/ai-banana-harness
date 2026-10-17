@@ -49,7 +49,7 @@ test("the renderer has no Node, a frozen API and the app origin", async ({ launc
     ipcRenderer: "undefined",
     frozen: true,
     origin: "app://banana",
-    theme: "system",
+    theme: "dark",
   });
   expect(facts.keys).toEqual([...bananaKeys].sort());
 });
