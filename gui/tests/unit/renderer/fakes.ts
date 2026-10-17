@@ -47,6 +47,8 @@ export function fakeClient(
   options: {
     sessions?: Session[];
     turns?: Record<string, unknown[]>;
+    /** What `workspace.list` reports as waiting. */
+    listedPending?: string[];
     running?: string[];
     prefs?: Prefs;
     picked?: string | null;
@@ -100,6 +102,16 @@ export function fakeClient(
     })),
     startTurn: vi.fn(async (_w: string, _s: string, _i: string) => undefined),
     cancelTurn: vi.fn(async (_w: string, _s: string) => undefined),
+    replyAction: vi.fn(async (..._args: unknown[]) => undefined),
+    pendingActionIds: vi.fn(async () => options.listedPending ?? []),
+    switchProvider: vi.fn(async (workspace: string, id: string, provider: string) =>
+      session({
+        id,
+        workspace,
+        provider,
+        model: provider === "qwen" ? "qwen3.8-flash" : "deepseek-flash",
+      }),
+    ),
     onSidecarEvent: vi.fn((listener: (f: EventFrame) => void) => {
       eventListeners.add(listener);
       return () => eventListeners.delete(listener);

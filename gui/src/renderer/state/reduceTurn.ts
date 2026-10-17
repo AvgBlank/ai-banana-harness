@@ -11,7 +11,7 @@ export interface CoreEvent {
 }
 
 export type TurnStatus = "running" | "done" | "error" | "cancelled" | "interrupted";
-export type ToolState = "running" | "done" | "blocked" | "interrupted";
+export type ToolState = "running" | "awaiting_approval" | "done" | "blocked" | "interrupted";
 export type ThreadStatus = "running" | "done" | "error" | "interrupted";
 
 export interface AssistantItem {
@@ -41,6 +41,19 @@ export interface ToolItem {
   children: string[];
 }
 
+/** A required action waiting for the user: an approval for one tool call, or a question. */
+export type PendingAction =
+  | {
+      kind: "approval";
+      actionId: string;
+      threadId: string;
+      toolCallId: string;
+      name: string;
+      rawArgs: string;
+      rule: string;
+    }
+  | { kind: "question"; actionId: string; threadId: string; question: string; options: string[] };
+
 export interface NoticeItem {
   kind: "notice";
   id: string;
@@ -66,6 +79,8 @@ export interface TurnView {
   items: Item[];
   /** Subagent threads by id; they render inside their `create_sub_agent` card, never in `items`. */
   threads: Record<string, ThreadView>;
+  /** Oldest first. Gone when answered, when the turn ends, or when the sidecar no longer lists them. */
+  pending: PendingAction[];
   startedMs: number | null;
   finishedMs: number | null;
   /** Event ids already applied: applying one twice changes nothing. */
@@ -80,6 +95,7 @@ export function optimisticTurn(input: string): TurnView {
     error: null,
     items: [],
     threads: {},
+    pending: [],
     startedMs: null,
     finishedMs: null,
     seen: new Set(),
@@ -253,11 +269,58 @@ export function reduceTurn(turn: TurnView, event: CoreEvent): TurnView {
       return inThread(base, threadId, (items) => [...items, tool]);
     }
 
+    case "tool.approval_required": {
+      const toolCallId = str(event.tool_call_id);
+      const action: PendingAction = {
+        kind: "approval",
+        actionId: str(event.action_id),
+        threadId,
+        toolCallId,
+        name: str(event.name),
+        rawArgs: str(event.arguments),
+        rule: str(event.rule),
+      };
+      const marked = mapTool(base, toolCallId, (tool) =>
+        tool.state === "running"
+          ? { ...tool, state: "awaiting_approval", rule: action.rule }
+          : tool,
+      );
+      return { ...marked, pending: [...marked.pending, action] };
+    }
+
+    case "tool.response_required": {
+      const action: PendingAction = {
+        kind: "question",
+        actionId: str(event.action_id),
+        threadId,
+        question: str(event.question),
+        options: Array.isArray(event.options) ? event.options.map(String) : [],
+      };
+      return { ...base, pending: [...base.pending, action] };
+    }
+
     case "tool.response": {
       const content = str(event.content);
       const blocked = event.blocked === true;
       const diff = typeof event.diff === "string" ? parseDiff(event.diff) : undefined;
-      return mapTool(base, str(event.tool_call_id), (tool) => {
+      const callId = str(event.tool_call_id);
+      const answered = allItems(base).find(
+        (i): i is ToolItem => i.kind === "tool" && i.toolCallId === callId,
+      );
+      // The call is over, so any approval for it is too; an answered question leaves its thread.
+      const open: TurnView = {
+        ...base,
+        pending: base.pending.filter(
+          (a) =>
+            !(a.kind === "approval" && a.toolCallId === callId) &&
+            !(
+              a.kind === "question" &&
+              answered?.name === "ask_question" &&
+              a.threadId === answered.threadId
+            ),
+        ),
+      };
+      return mapTool(open, callId, (tool) => {
         if (blocked) {
           return {
             ...tool,
@@ -322,6 +385,7 @@ export function reduceTurn(turn: TurnView, event: CoreEvent): TurnView {
       return {
         ...base,
         status,
+        pending: [],
         error: typeof event.error === "string" ? event.error : null,
         finishedMs: ulidMs(event.id),
       };
@@ -374,8 +438,21 @@ export function summarize(turn: TurnView): TurnSummary {
 
 function interruptItems(items: Item[]): Item[] {
   return items.map((i) =>
-    i.kind === "tool" && i.state === "running" ? { ...i, state: "interrupted" } : i,
+    i.kind === "tool" && (i.state === "running" || i.state === "awaiting_approval")
+      ? { ...i, state: "interrupted" }
+      : i,
   );
+}
+
+/** The turn without the action (answered, or no longer waiting). */
+export function dropAction(turn: TurnView, actionId: string): TurnView {
+  const pending = turn.pending.filter((a) => a.actionId !== actionId);
+  return pending.length === turn.pending.length ? turn : { ...turn, pending };
+}
+
+/** The turn without its pending actions, e.g. when Stop was pressed. */
+export function clearPending(turn: TurnView): TurnView {
+  return turn.pending.length === 0 ? turn : { ...turn, pending: [] };
 }
 
 /** A stored turn (`TurnRecord`) rebuilt as a view. A turn that never finished is interrupted. */
@@ -393,6 +470,8 @@ export function turnFromRecord(record: {
     turn = {
       ...turn,
       status: "interrupted",
+      // The action went with the process that was waiting on it.
+      pending: [],
       items: interruptItems(turn.items),
       threads: Object.fromEntries(
         Object.entries(turn.threads).map(([id, t]) => [

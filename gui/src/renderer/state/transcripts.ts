@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import type { EventFrame } from "../../shared/protocol";
+import type { Answer } from "../lib/client";
 import { useClient } from "./client-context";
 import {
   type CoreEvent,
+  clearPending,
+  dropAction,
   optimisticTurn,
+  type PendingAction,
   reduceTurn,
   type TurnView,
   turnFromRecord,
@@ -25,6 +29,10 @@ type Action =
   | { type: "sent"; workspace: string; sessionId: string; input: string }
   | { type: "send_failed"; workspace: string; sessionId: string }
   | { type: "stopping"; workspace: string }
+  | { type: "dismiss"; sessionId: string; actionId: string }
+  | { type: "reconcile"; listed: ReadonlySet<string>; asked: ReadonlySet<string> }
+  | { type: "dismiss"; sessionId: string; actionId: string }
+  | { type: "reconcile"; listed: ReadonlySet<string>; asked: ReadonlySet<string> }
   | { type: "frames"; frames: EventFrame[] };
 
 export const emptyTranscripts: TranscriptState = { turns: {}, load: {}, active: {} };
@@ -99,10 +107,38 @@ export function transcriptReducer(state: TranscriptState, action: Action): Trans
     case "stopping": {
       const current = state.active[action.workspace];
       if (!current) return state;
+      // Stopping resolves every waiting action as denied, so their dialogs close at once.
+      const turns = state.turns[current.sessionId] ?? [];
       return {
         ...state,
+        turns: { ...state.turns, [current.sessionId]: turns.map(clearPending) },
         active: { ...state.active, [action.workspace]: { ...current, stopping: true } },
       };
+    }
+    case "dismiss":
+      return {
+        ...state,
+        turns: {
+          ...state.turns,
+          [action.sessionId]: (state.turns[action.sessionId] ?? []).map((t) =>
+            dropAction(t, action.actionId),
+          ),
+        },
+      };
+    case "reconcile": {
+      // Only actions that were already waiting when the list was asked for can be judged gone.
+      const turns = Object.fromEntries(
+        Object.entries(state.turns).map(([id, list]) => [
+          id,
+          list.map((t) => ({
+            ...t,
+            pending: t.pending.filter(
+              (a) => !action.asked.has(a.actionId) || action.listed.has(a.actionId),
+            ),
+          })),
+        ]),
+      );
+      return { ...state, turns };
     }
     case "frames":
       return action.frames.reduce(applyFrame, state);
@@ -116,6 +152,10 @@ export interface Transcripts {
   /** Shows the prompt at once, then asks the sidecar; rejects, with the prompt removed, on failure. */
   send(workspace: string, sessionId: string, input: string): Promise<void>;
   stop(workspace: string, sessionId: string): Promise<void>;
+  /** Answers a required action; it leaves the screen at once, and a refusal from the sidecar changes nothing. */
+  reply(workspace: string, sessionId: string, actionId: string, answer: Answer): Promise<void>;
+  /** Drops the pending actions the sidecar no longer lists. */
+  reconcile(): Promise<void>;
   /** The session could not be opened, so its turns cannot be read. */
   markFailed(sessionId: string): void;
 }
@@ -155,6 +195,8 @@ export function useTranscripts(onTurnEdge: () => void): Transcripts {
     });
   }, [client]);
 
+  const reconcileRef = useRef<() => Promise<void>>(async () => undefined);
+
   const load = useCallback(
     async (workspace: string, sessionId: string) => {
       dispatch({ type: "loading", sessionId });
@@ -193,10 +235,39 @@ export function useTranscripts(onTurnEdge: () => void): Transcripts {
     [client],
   );
 
+  const reply = useCallback(
+    async (workspace: string, sessionId: string, actionId: string, answer: Answer) => {
+      dispatch({ type: "dismiss", sessionId, actionId });
+      // `unknown_action` means it was already gone; either way the dialog is closed.
+      await client.replyAction(workspace, sessionId, actionId, answer).catch(() => undefined);
+    },
+    [client],
+  );
+
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const reconcile = useCallback(async () => {
+    const asked = new Set(
+      Object.values(stateRef.current.turns).flatMap((list) =>
+        list.flatMap((t) => t.pending.map((a) => a.actionId)),
+      ),
+    );
+    if (asked.size === 0) return;
+    const listed = new Set(await client.pendingActionIds().catch(() => [...asked]));
+    dispatch({ type: "reconcile", listed, asked });
+  }, [client]);
+
+  reconcileRef.current = reconcile;
+
   const markFailed = useCallback(
     (sessionId: string) => dispatch({ type: "load_failed", sessionId }),
     [],
   );
 
-  return { state, load, send, stop, markFailed };
+  return { state, load, send, stop, reply, reconcile, markFailed };
+}
+
+/** Every pending action across a session's turns, oldest first. */
+export function pendingOf(state: TranscriptState, sessionId: string): PendingAction[] {
+  return (state.turns[sessionId] ?? []).flatMap((t) => t.pending);
 }

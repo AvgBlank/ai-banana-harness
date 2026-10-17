@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import type { Launched, Stub } from "./fixtures";
@@ -122,29 +122,6 @@ function scenarioReplies(name: string): unknown[] {
   return (JSON.parse(readFileSync(file, "utf8")) as { replies: unknown[] }).replies;
 }
 
-/**
- * Answers every approval request with Allow through the real protocol. The approval dialog is a
- * later feature; until it exists, the test plays the user's part so the turn can run.
- */
-async function allowEverything(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    window.banana.on("sidecarEvent", (payload) => {
-      const frame = payload as {
-        workspace: string;
-        session_id: string;
-        event: { type: string; action_id?: string };
-      };
-      if (frame.event.type !== "tool.approval_required") return;
-      void window.banana.rpc.call("action.reply", {
-        workspace: frame.workspace,
-        session_id: frame.session_id,
-        action_id: frame.event.action_id as string,
-        answer: "allow",
-      });
-    });
-  });
-}
-
 test("bash-and-test: the command card shows its exit chip and survives a reload and resume", async ({
   launch,
   stub,
@@ -153,8 +130,8 @@ test("bash-and-test: the command card shows its exit chip and survives a reload 
   await queueReplies(scenarioReplies("bash-and-test"));
   const app = await launch();
   await openFolder(app, stub);
-  await allowEverything(app.page);
   await sendPrompt(app.page, "run the check");
+  await app.page.getByRole("button", { name: "Allow once" }).click();
 
   await expect(app.page.getByText("The check printed ok.")).toBeVisible();
   const card = app.page.getByRole("button", { name: /bash/ });
@@ -210,4 +187,138 @@ test("subagents: two children nest in their own cards and nothing leaks to the r
   await expect(
     app.page.getByRole("region", { name: "Subagent beta" }).getByText("beta done"),
   ).toBeVisible();
+});
+
+interface Scenario {
+  replies: unknown[];
+  expect: {
+    requests?: number;
+    request_contains?: Array<{ index: number; text: string }>;
+    files?: Record<string, string>;
+  };
+}
+
+function scenario(name: string): Scenario {
+  const file = join(__dirname, "../../../crates/harness-testkit/scenarios", `${name}.json`);
+  return JSON.parse(readFileSync(file, "utf8")) as Scenario;
+}
+
+/** The model-facing and file expectations every seam shares. */
+async function expectScenario(stub: Stub, name: string, denied: string[] = []): Promise<void> {
+  const { expect: want } = scenario(name);
+  const seen = await requests(stub);
+  if (want.requests !== undefined) expect(seen).toHaveLength(want.requests);
+  for (const { index, text } of want.request_contains ?? []) {
+    expect(JSON.stringify(seen[index]?.body.messages)).toContain(text);
+  }
+  for (const [path, content] of Object.entries(want.files ?? {})) {
+    expect(readFileSync(join(stub.workspace, path), "utf8")).toBe(content);
+  }
+  for (const path of denied) expect(existsSync(join(stub.workspace, path))).toBe(false);
+  expect(seen.every((r) => r.auth_ok)).toBe(true);
+}
+
+test("edit-and-approve: allow once for the edit, deny for the command", async ({
+  launch,
+  stub,
+  queueReplies,
+}) => {
+  await queueReplies(scenario("edit-and-approve").replies);
+  const app = await launch();
+  await openFolder(app, stub);
+  await sendPrompt(app.page, "write a note and deploy it");
+
+  const dialog = app.page.getByRole("dialog");
+  await expect(dialog.getByText("Allow this action?")).toBeVisible();
+  await expect(dialog.getByText("NOTES.md")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Deny" })).toBeFocused();
+  await dialog.getByRole("button", { name: "Allow once" }).click();
+
+  await expect(dialog.getByText("Run this command?")).toBeVisible();
+  await expect(dialog.getByText("touch deployed.txt")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Deny" })).toBeFocused();
+  await dialog.getByRole("button", { name: "Deny" }).click();
+
+  await expect(app.page.getByText("Done. I wrote NOTES.md.")).toBeVisible();
+  await expect(dialog).toBeHidden();
+  await expectScenario(stub, "edit-and-approve", ["deployed.txt"]);
+});
+
+test("edit-and-approve: allow for this session skips the second prompt for the same rule", async ({
+  launch,
+  stub,
+  queueReplies,
+}) => {
+  const write = (id: string, path: string) => ({
+    sse: { tool_calls: [{ id, name: "write_file", arguments: { path, content: `${path}\n` } }] },
+  });
+  await queueReplies([
+    write("c1", "one.txt"),
+    write("c2", "two.txt"),
+    { sse: { text: "Both written." } },
+  ]);
+  const app = await launch();
+  await openFolder(app, stub);
+  await sendPrompt(app.page, "write two files");
+
+  await app.page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Allow for this session" })
+    .click();
+  await expect(app.page.getByText("Both written.")).toBeVisible();
+  await expect(app.page.getByRole("dialog")).toBeHidden();
+  expect(readFileSync(join(stub.workspace, "two.txt"), "utf8")).toBe("two.txt\n");
+  expect(await requests(stub)).toHaveLength(3);
+});
+
+test("question-and-answer: the typed answer goes back to the model and shows on the card", async ({
+  launch,
+  stub,
+  queueReplies,
+}) => {
+  await queueReplies(scenario("question-and-answer").replies);
+  const app = await launch();
+  await openFolder(app, stub);
+  await sendPrompt(app.page, "greet me");
+
+  const dialog = app.page.getByRole("dialog");
+  await expect(dialog.getByText("What is your name?", { exact: true }).first()).toBeVisible();
+  await dialog.getByLabel("Your answer").fill("Ada");
+  await dialog.getByRole("button", { name: "Send answer" }).click();
+
+  await expect(app.page.getByText("Nice to meet you, Ada.")).toBeVisible();
+  await expect(app.page.getByText("Answer:")).toContainText("Ada");
+  await expectScenario(stub, "question-and-answer");
+});
+
+test("a turn that is stopped while it waits closes its dialog", async ({
+  launch,
+  stub,
+  queueReplies,
+}) => {
+  await queueReplies(scenario("edit-and-approve").replies);
+  const app = await launch();
+  await openFolder(app, stub);
+  await sendPrompt(app.page, "write a note");
+  await expect(app.page.getByRole("dialog")).toBeVisible();
+  // Another way out of a waiting turn: the sidecar is told to cancel it.
+  await app.page.evaluate(async () => {
+    const [{ workspace }] = (
+      (await window.banana.rpc.call("workspace.list", {})) as {
+        workspaces: Array<{ workspace: string }>;
+      }
+    ).workspaces;
+    const sessions = (
+      (await window.banana.rpc.call("session.list", {})) as {
+        sessions: Array<{ id: string; workspace: string }>;
+      }
+    ).sessions;
+    const mine = sessions.find((s) => s.workspace === workspace);
+    await window.banana.rpc.call("turn.cancel", {
+      workspace,
+      session_id: (mine as { id: string }).id,
+    });
+  });
+  await expect(app.page.getByRole("dialog")).toBeHidden();
+  await expect(app.page.getByRole("button", { name: "Send" })).toBeVisible();
 });

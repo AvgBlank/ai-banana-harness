@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
+import { ApprovalDialog } from "@/components/dialogs/ApprovalDialog";
+import { QuestionDialog } from "@/components/dialogs/QuestionDialog";
 import { HomeScreen } from "@/components/home/HomeScreen";
 import { SessionView } from "@/components/session/SessionView";
 import { SettingsView } from "@/components/settings/SettingsView";
@@ -10,7 +12,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { useClient } from "@/state/client-context";
 import { useSessions } from "@/state/sessions";
 import { StateProvider, useApp } from "@/state/store";
-import { useTranscripts } from "@/state/transcripts";
+import { pendingOf, useTranscripts } from "@/state/transcripts";
 import type { KeyStatus, Prefs } from "../shared/api";
 import type { Session } from "../shared/protocol";
 
@@ -148,6 +150,34 @@ function Shell({ prefs }: { prefs: Prefs }) {
     [client, data, provider, set, state.workspace, transcripts],
   );
 
+  // Required actions of the session on screen, oldest first; approvals and questions queue together.
+  const pending = session ? pendingOf(transcripts.state, session.id) : [];
+  const nextAction = pending[0];
+  const approvals = pending.filter((a) => a.kind === "approval");
+
+  // After a restart or a reload, the sidecar's own list says which actions still wait.
+  useEffect(() => {
+    return client.onSidecarState(({ state: sidecar }) => {
+      if (sidecar === "ready") void transcripts.reconcile();
+    });
+  }, [client, transcripts.reconcile]);
+
+  const switchProvider = useCallback(
+    async (id: string) => {
+      if (state.view !== "session" || !session) {
+        setProvider(id);
+        return;
+      }
+      try {
+        data.add(await client.switchProvider(session.workspace, session.id, id));
+        setProvider(id);
+      } catch {
+        // The sidecar refused (for example, a turn is running); the session keeps its provider.
+      }
+    },
+    [client, data, session, state.view],
+  );
+
   const sessionWorkspace = session?.workspace ?? state.workspace;
   const activeTurn = sessionWorkspace ? transcripts.state.active[sessionWorkspace] : undefined;
   const turnRunning = Boolean(
@@ -191,8 +221,8 @@ function Shell({ prefs }: { prefs: Prefs }) {
               load={transcripts.state.load[session.id]}
               running={turnRunning}
               stopping={activeTurn?.stopping ?? false}
-              provider={provider}
-              onPickProvider={setProvider}
+              provider={session.provider}
+              onPickProvider={switchProvider}
               keyMissing={key !== null && !key.present}
               onSend={(text) => transcripts.send(session.workspace, session.id, text)}
               onStop={() => void transcripts.stop(session.workspace, session.id)}
@@ -215,6 +245,25 @@ function Shell({ prefs }: { prefs: Prefs }) {
         </main>
         {changesShown && <ChangesPlaceholder />}
       </div>
+      {session && (
+        <>
+          <ApprovalDialog
+            action={nextAction?.kind === "approval" ? nextAction : undefined}
+            position={nextAction?.kind === "approval" ? approvals.indexOf(nextAction) + 1 : 0}
+            total={approvals.length}
+            workspace={session.workspace}
+            onAnswer={(action, answer) =>
+              void transcripts.reply(session.workspace, session.id, action.actionId, answer)
+            }
+          />
+          <QuestionDialog
+            action={nextAction?.kind === "question" ? nextAction : undefined}
+            onAnswer={(action, text) =>
+              void transcripts.reply(session.workspace, session.id, action.actionId, { text })
+            }
+          />
+        </>
+      )}
     </div>
   );
 }

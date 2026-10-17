@@ -5,8 +5,10 @@ import {
   FileEdit,
   FilePlus2,
   FileText,
+  HelpCircle,
   Loader2,
   Search,
+  ShieldQuestion,
   Terminal,
   TriangleAlert,
   Wrench,
@@ -24,11 +26,13 @@ const ICONS: Record<string, ReactNode> = {
   edit: <FileEdit size={15} />,
   write_file: <FilePlus2 size={15} />,
   bash: <Terminal size={15} />,
+  ask_question: <HelpCircle size={15} />,
 };
 
 /** The one line a closed card shows: the command, the path or the pattern, else the raw arguments. */
 export function summaryOf(tool: ToolItem): string {
   const args = tool.args;
+  if (tool.name === "ask_question" && typeof args?.question === "string") return args.question;
   if (!args) return tool.rawArgs;
   for (const key of ["command", "path", "pattern", "query", "name"]) {
     const value = args[key];
@@ -41,6 +45,7 @@ export function ToolCard({ tool }: { tool: ToolItem }) {
   const [open, setOpen] = useState(false);
   const [all, setAll] = useState(false);
   const blocked = tool.state === "blocked";
+  const awaiting = tool.state === "awaiting_approval";
   const output = tool.output ?? "";
   const clip = clipOutput(output);
   const shown = all ? output : clip.text;
@@ -95,6 +100,14 @@ export function ToolCard({ tool }: { tool: ToolItem }) {
               role="img"
             />
           )}
+          {tool.state === "awaiting_approval" && (
+            <ShieldQuestion
+              size={15}
+              className="text-warn"
+              aria-label="Awaiting approval"
+              role="img"
+            />
+          )}
           {tool.state === "blocked" && (
             <Ban size={15} className="text-warn" aria-label="Blocked" role="img" />
           )}
@@ -112,7 +125,17 @@ export function ToolCard({ tool }: { tool: ToolItem }) {
           </span>
         </div>
       )}
-      {open && !blocked && hasBody && (
+      {awaiting && (
+        <div className="border-t border-warn/25 bg-warn-soft px-3.5 py-2 text-[12.5px] text-warn">
+          Waiting for your approval · <span className="font-mono">{tool.rule}</span>
+        </div>
+      )}
+      {tool.name === "ask_question" && tool.state === "done" && output !== "" && (
+        <div className="border-t border-line px-3.5 py-2 text-[12.5px] text-muted">
+          Answer: <span className="text-fg">{output}</span>
+        </div>
+      )}
+      {open && !blocked && hasBody && tool.name !== "ask_question" && (
         <div className="border-t border-line bg-bg/60">
           {tool.diff ? (
             <div className="max-h-72 overflow-y-auto py-1.5">
