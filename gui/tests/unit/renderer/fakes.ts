@@ -1,7 +1,14 @@
 import { type Mocked, vi } from "vitest";
 import type { Client, SidecarStatus } from "../../../src/renderer/lib/client";
 import type { FileChange } from "../../../src/renderer/state/changes";
-import type { KeyStatus, Prefs, PrefsPatch } from "../../../src/shared/api";
+import type {
+  KeyStatus,
+  Prefs,
+  PrefsPatch,
+  TrustedWorkspace,
+  TrustReview,
+  TrustState,
+} from "../../../src/shared/api";
 import type { EventFrame, ProviderOption, Session } from "../../../src/shared/protocol";
 
 export function session(over: Partial<Session> & Pick<Session, "id" | "workspace">): Session {
@@ -22,6 +29,33 @@ export function fileChange(over: Partial<FileChange> & Pick<FileChange, "path">)
     removed: 1,
     patch: "--- a\n+++ b\n@@ -1,1 +1,1 @@\n-old\n+new\n",
     truncated: false,
+    ...over,
+  };
+}
+
+export function reviewOf(workspace: string, over: Partial<TrustReview> = {}): TrustReview {
+  return {
+    workspace,
+    configPath: `${workspace}/.banana-harness/config.toml`,
+    sha256: "c".repeat(64),
+    raw: "[mcp.x]\ncommand = ['tool']\n",
+    parseError: null,
+    summary: {
+      mcp: [
+        {
+          name: "x",
+          command: ["tool", "--flag"],
+          envNames: ["TOKEN"],
+          leaksKey: true,
+          usesEnvRef: true,
+          preload: true,
+        },
+      ],
+      permissions: [{ tool: "bash", pattern: "sudo *", action: "allow", risky: true }],
+      providers: [],
+      other: ["agent.instructions"],
+    },
+    baseline: [{ provider: "deepseek", origin: "https://api.deepseek.com" }],
     ...over,
   };
 }
@@ -70,6 +104,10 @@ export function fakeClient(
     foundOnRecheck?: KeyStatus;
     turnFiles?: FileChange[];
     workspaceFiles?: FileChange[];
+    /** The trust state `workspace.open` reports, by path (`none` otherwise). */
+    trust?: Record<string, TrustState>;
+    review?: TrustReview;
+    trusted?: TrustedWorkspace[];
   } = {},
 ): FakeClient {
   const listeners = new Set<(status: SidecarStatus) => void>();
@@ -102,7 +140,20 @@ export function fakeClient(
     ),
     providers: vi.fn(async () => ({ providers: PROVIDERS, default: "deepseek" })),
     pickFolder: vi.fn(async () => options.picked ?? null),
-    openWorkspace: vi.fn(async (path: string) => ({ workspace: path, restricted: true })),
+    openWorkspace: vi.fn(async (path: string) => ({
+      workspace: path,
+      trust: options.trust?.[path] ?? ("none" as const),
+    })),
+    reviewTrust: vi.fn(async (path: string) => options.review ?? reviewOf(path)),
+    trustWorkspace: vi.fn(async (request: { path: string }) => ({
+      workspace: request.path,
+      trust: "trusted" as const,
+    })),
+    trustedWorkspaces: vi.fn(async () => options.trusted ?? []),
+    forgetTrust: vi.fn(async (path: string) => ({
+      workspace: path,
+      trust: "needs_review" as const,
+    })),
     onSidecarState: vi.fn((listener: (status: SidecarStatus) => void) => {
       listeners.add(listener);
       return () => listeners.delete(listener);

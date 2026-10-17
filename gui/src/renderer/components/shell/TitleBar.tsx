@@ -1,4 +1,5 @@
 import { ArrowLeft, ArrowRight, FileDiff, PanelLeft } from "lucide-react";
+import { RestrictedChip } from "@/components/banners/RestrictedChip";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { folderName } from "@/lib/format";
@@ -7,10 +8,15 @@ import { useApp } from "@/state/store";
 export function TitleBar({
   sessionTitle,
   totals,
+  restricted,
+  onReviewTrust,
 }: {
   sessionTitle: string | null;
   /** The current scope's line counts, shown on the Changes button once there are some. */
   totals: { added: number; removed: number } | null;
+  /** The workspace has a config that is not trusted, so it runs restricted. */
+  restricted: boolean;
+  onReviewTrust: () => void;
 }) {
   const { state, set } = useApp();
   const workspace = state.workspace ? folderName(state.workspace) : null;
@@ -58,6 +64,7 @@ export function TitleBar({
       </div>
 
       <div className="no-drag ml-auto flex items-center gap-1">
+        {restricted && <RestrictedChip onReview={onReviewTrust} />}
         <Tooltip label={state.changesOpen ? "Hide changes" : "Show changes"}>
           <Button
             variant={state.changesOpen ? "secondary" : "ghost"}

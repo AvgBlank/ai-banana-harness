@@ -1,11 +1,14 @@
 // @vitest-environment node
+import { join } from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import { ExternalLinks } from "../../../src/main/external/links";
 import { KnownWorkspaces } from "../../../src/main/ipc/known";
 import { registerIpc } from "../../../src/main/ipc/register";
 import { RpcError } from "../../../src/main/sidecar/client";
 import type { SidecarState } from "../../../src/main/sidecar/supervisor";
+import { TrustStore } from "../../../src/main/trust/store";
 import { channels } from "../../../src/shared/channels";
+import { tempDir } from "./tmp";
 
 const basePrefs = {
   theme: "dark" as const,
@@ -67,6 +70,7 @@ function setup(options: { request?: (method: string, params: unknown) => unknown
     known,
     links: new ExternalLinks({ confirm, open }),
     appInfo: { name: "App", version: "0.1.0", platform: "darwin" },
+    trustStore: new TrustStore(join(tempDir("reg-"), "trust.json")),
     prefs: {
       get: async () => ({ ...basePrefs }),
       set: async (patch) => ({ ...basePrefs, ...patch }),
@@ -207,7 +211,7 @@ describe("workspaces", () => {
     });
     expect(await t.call(channels.workspaceOpen, { path: "/picked" })).toEqual({
       ok: true,
-      value: { workspace: "/picked", restricted: true },
+      value: { workspace: "/picked", trust: "none" },
     });
     expect(t.request).toHaveBeenCalledWith("workspace.open", {
       path: "/picked",
@@ -306,6 +310,43 @@ describe("the API key", () => {
     const running = setup();
     await running.call(channels.keyRecheck);
     expect(running.supervisor.restart).not.toHaveBeenCalled();
+  });
+});
+
+describe("trust channels", () => {
+  const sha = "a".repeat(64);
+
+  test("review and trust refuse a path main does not know, before the sidecar is asked", async () => {
+    const t = setup();
+    expect(await t.call(channels.trustReview, { path: "/etc" })).toMatchObject({
+      ok: false,
+      error: { code: "unknown_workspace" },
+    });
+    expect(
+      await t.call(channels.trustGrant, { path: "/etc", sha256: sha, acknowledgeHosts: true }),
+    ).toMatchObject({ ok: false, error: { code: "unknown_workspace" } });
+    expect(t.request).not.toHaveBeenCalled();
+  });
+
+  test("trusting takes exactly a path, a hash and the acknowledgement", async () => {
+    const t = setup();
+    await t.call(channels.workspacePick);
+    for (const bad of [
+      { path: "/picked", sha256: "short", acknowledgeHosts: true },
+      { path: "/picked", sha256: sha },
+      { path: "/picked", sha256: sha, acknowledgeHosts: true, trust_workspace_config: true },
+    ]) {
+      expect(await t.call(channels.trustGrant, bad)).toMatchObject({
+        ok: false,
+        error: { code: "invalid_arguments" },
+      });
+    }
+    expect(t.request).not.toHaveBeenCalled();
+  });
+
+  test("the list starts empty", async () => {
+    const t = setup();
+    expect(await t.call(channels.trustList)).toEqual({ ok: true, value: [] });
   });
 });
 

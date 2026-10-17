@@ -10,6 +10,7 @@ import { KeyResolver } from "./key/resolver";
 import { installAppProtocol, registerAppScheme } from "./origin";
 import { Preferences } from "./prefs";
 import { SidecarSupervisor } from "./sidecar/supervisor";
+import { TrustStore } from "./trust/store";
 import { createWindow, denyPermissions, devServer } from "./window";
 
 // Privileges for the `app://` scheme must be registered before the app is ready.
@@ -27,7 +28,8 @@ function createSupervisor(keys: KeyResolver): SidecarSupervisor {
     spawn: (bin, args, options) =>
       spawn(bin, args, { env: options.env, stdio: "pipe" }) as ChildProcessWithoutNullStreams,
     environment: () => keys.environment(),
-    // Restricted again; the trust flow re-evaluates trust before anything stronger.
+    // Restricted again; the renderer opens the workspace anew once the sidecar is ready, which
+    // re-evaluates trust before anything stronger.
     reopenWorkspace: async (path) => {
       await supervisor.request("workspace.open", { path, trust_workspace_config: false });
     },
@@ -46,6 +48,7 @@ function main(): void {
   });
   const prefs = new Preferences(join(app.getPath("userData"), "preferences.json"));
   const known = new KnownWorkspaces();
+  const trustStore = new TrustStore(join(app.getPath("userData"), "trust.json"));
   const supervisor = createSupervisor(keys);
   let window: BrowserWindow | null = null;
 
@@ -70,6 +73,7 @@ function main(): void {
       known,
       keys,
       prefs,
+      trustStore,
       links: new ExternalLinks({
         confirm: async (url) => {
           const options = {

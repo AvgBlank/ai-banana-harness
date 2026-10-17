@@ -6,6 +6,8 @@ import type {
   OpenedWorkspace,
   Prefs,
   PrefsPatch,
+  TrustedWorkspace,
+  TrustReview,
 } from "../shared/api";
 import { channels, type PushName, pushChannels } from "../shared/channels";
 
@@ -30,6 +32,11 @@ const api: BananaApi = Object.freeze({
     pick: () => invoke<string | null>(channels.workspacePick),
     open: (path: string) => invoke<OpenedWorkspace>(channels.workspaceOpen, { path }),
     close: (path: string) => invoke<void>(channels.workspaceClose, { path }),
+    review: (path: string) => invoke<TrustReview>(channels.trustReview, { path }),
+    trust: (request: { path: string; sha256: string; acknowledgeHosts: boolean }) =>
+      invoke<OpenedWorkspace>(channels.trustGrant, request),
+    trusted: () => invoke<TrustedWorkspace[]>(channels.trustList),
+    forget: (path: string) => invoke<OpenedWorkspace | null>(channels.trustForget, { path }),
   }),
   key: Object.freeze({
     status: () => invoke<KeyStatus>(channels.keyStatus),

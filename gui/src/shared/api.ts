@@ -36,10 +36,62 @@ export interface AppInfo {
   protocol: number;
 }
 
-/** The result of opening a workspace: always restricted until the trust flow upgrades it. */
+/**
+ * What the workspace config allows. `none`: there is no config to trust. `needs_review`: there is
+ * one and the user has not trusted this exact file. `unreadable`: it cannot be hashed (a symlink,
+ * too large, unreadable) or fails to load, so the workspace stays restricted.
+ */
+export type TrustState = "none" | "trusted" | "needs_review" | "unreadable";
+
+/** The result of opening a workspace: restricted until the trust flow upgrades it. */
 export interface OpenedWorkspace {
   workspace: string;
-  restricted: boolean;
+  trust: TrustState;
+}
+
+/** An advisory reading of a workspace config for the trust dialog. */
+export interface TrustSummary {
+  mcp: Array<{
+    name: string;
+    command: string[];
+    envNames: string[];
+    /** An env value holds `{env:AI_API_KEY}`. */
+    leaksKey: boolean;
+    /** An env value expands some environment variable. */
+    usesEnvRef: boolean;
+    preload: boolean;
+  }>;
+  permissions: Array<{ tool: string; pattern: string | null; action: string; risky: boolean }>;
+  providers: Array<{
+    provider: string;
+    baseUrl: string;
+    /** `scheme://authority`, or `null` when the URL does not parse. */
+    origin: string | null;
+    /** The destination differs from the baseline. */
+    differs: boolean;
+  }>;
+  /** Overrides of the agent's instructions, tools or skill paths. */
+  other: string[];
+}
+
+/** Everything the trust dialog shows, read by main from the file itself. */
+export interface TrustReview {
+  workspace: string;
+  configPath: string;
+  /** Hash of the text shown; trusting is bound to it. */
+  sha256: string;
+  raw: string;
+  /** Set when the TOML does not parse; then there is no summary. */
+  parseError: string | null;
+  summary: TrustSummary | null;
+  /** Where each provider sends the key before the config applies. */
+  baseline: Array<{ provider: string; origin: string }>;
+}
+
+export interface TrustedWorkspace {
+  workspace: string;
+  trustedAt: string;
+  approvedHosts: string[];
 }
 
 /** The only object the preload exposes to the renderer as `window.banana`. */
@@ -56,6 +108,17 @@ export interface BananaApi {
     /** Opens a folder main already knows (picked this run, or a session's workspace). */
     open(path: string): Promise<OpenedWorkspace>;
     close(path: string): Promise<void>;
+    /** Main reads the workspace config and returns it with its summary. */
+    review(path: string): Promise<TrustReview>;
+    /** Trusts the file whose hash was reviewed and reopens the workspace with it. */
+    trust(request: {
+      path: string;
+      sha256: string;
+      acknowledgeHosts: boolean;
+    }): Promise<OpenedWorkspace>;
+    trusted(): Promise<TrustedWorkspace[]>;
+    /** Removes the trust entry; an open workspace goes back to restricted (`null` when closed). */
+    forget(path: string): Promise<OpenedWorkspace | null>;
   };
   readonly key: {
     status(): Promise<KeyStatus>;

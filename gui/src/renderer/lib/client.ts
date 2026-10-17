@@ -5,6 +5,8 @@ import type {
   OpenedWorkspace,
   Prefs,
   PrefsPatch,
+  TrustedWorkspace,
+  TrustReview,
 } from "../../shared/api";
 import type {
   EventFrame,
@@ -59,6 +61,14 @@ export interface Client {
   onSidecarEvent(listener: (frame: EventFrame) => void): () => void;
   pickFolder(): Promise<string | null>;
   openWorkspace(path: string): Promise<OpenedWorkspace>;
+  reviewTrust(path: string): Promise<TrustReview>;
+  trustWorkspace(request: {
+    path: string;
+    sha256: string;
+    acknowledgeHosts: boolean;
+  }): Promise<OpenedWorkspace>;
+  trustedWorkspaces(): Promise<TrustedWorkspace[]>;
+  forgetTrust(path: string): Promise<OpenedWorkspace | null>;
   onSidecarState(listener: (status: SidecarStatus) => void): () => void;
 }
 
@@ -116,6 +126,10 @@ export function clientFor(banana: BananaApi): Client {
       banana.on("sidecarEvent", (payload) => listener(payload as EventFrame)),
     pickFolder: () => banana.workspace.pick(),
     openWorkspace: (path) => banana.workspace.open(path),
+    reviewTrust: (path) => banana.workspace.review(path),
+    trustWorkspace: (request) => banana.workspace.trust(request),
+    trustedWorkspaces: () => banana.workspace.trusted(),
+    forgetTrust: (path) => banana.workspace.forget(path),
     onSidecarState: (listener) =>
       banana.on("sidecarState", (payload) => listener(payload as SidecarStatus)),
   };

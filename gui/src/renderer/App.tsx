@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ChangesPanel, pickFile, totals } from "@/components/changes/ChangesPanel";
 import { ApprovalDialog } from "@/components/dialogs/ApprovalDialog";
 import { QuestionDialog } from "@/components/dialogs/QuestionDialog";
+import { type ReviewState, TrustDialog } from "@/components/dialogs/TrustDialog";
 import { UndoDialog } from "@/components/dialogs/UndoDialog";
 import { HomeScreen } from "@/components/home/HomeScreen";
 import { SessionView } from "@/components/session/SessionView";
@@ -15,7 +16,7 @@ import { useClient } from "@/state/client-context";
 import { useSessions } from "@/state/sessions";
 import { StateProvider, useApp } from "@/state/store";
 import { pendingOf, useTranscripts } from "@/state/transcripts";
-import type { KeyStatus, Prefs } from "../shared/api";
+import type { KeyStatus, OpenedWorkspace, Prefs, TrustState } from "../shared/api";
 import type { Session } from "../shared/protocol";
 
 const NARROW = "(max-width: 1279px)";
@@ -31,6 +32,11 @@ function useNarrow(): boolean {
   }, []);
   return narrow;
 }
+
+const messageOf = (error: unknown, fallback: string): string =>
+  typeof error === "object" && error !== null && "message" in error
+    ? String(error.message)
+    : fallback;
 
 /** The clock for relative times; it ticks once a minute. */
 function useNow(): number {
@@ -64,7 +70,32 @@ function Shell({ prefs }: { prefs: Prefs }) {
   const [appName, setAppName] = useState("");
   const [provider, setProvider] = useState<string | null>(null);
   const [key, setKey] = useState<KeyStatus | null>(null);
+  const [trust, setTrust] = useState<Record<string, TrustState>>({});
+  const trustRef = useRef(trust);
+  trustRef.current = trust;
+  const [notice, setNotice] = useState<string | null>(null);
+  const [review, setReview] = useState<{
+    workspace: string;
+    state: ReviewState;
+    busy: boolean;
+    error: string | null;
+  } | null>(null);
   const [recents, setRecents] = useState<string[]>(prefs.recents);
+
+  const track = useCallback((opened: OpenedWorkspace) => {
+    setTrust((before) => ({ ...before, [opened.workspace]: opened.trust }));
+  }, []);
+  // A workspace main refused to open (its config would move the API key) is told, not hidden.
+  const reportRefusal = useCallback((error: unknown) => {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "blocked_config"
+    ) {
+      setNotice(messageOf(error, "Blocked."));
+    }
+  }, []);
 
   useEffect(() => {
     client.appInfo().then(
@@ -82,26 +113,38 @@ function Shell({ prefs }: { prefs: Prefs }) {
         if (cancelled) return;
         setKey(status);
         if (status.present && prefs.lastWorkspace) {
-          const opened = await client.openWorkspace(prefs.lastWorkspace).catch(() => null);
-          if (opened && !cancelled) set({ workspace: opened.workspace });
+          const opened = await client.openWorkspace(prefs.lastWorkspace).catch((e) => {
+            reportRefusal(e);
+            return null;
+          });
+          if (opened && !cancelled) {
+            track(opened);
+            set({ workspace: opened.workspace });
+          }
         }
       })
       .catch(() => undefined);
     return () => {
       cancelled = true;
     };
-  }, [client, prefs.lastWorkspace, set]);
+  }, [client, prefs.lastWorkspace, set, track, reportRefusal]);
 
   // A key arriving later (check again, or typed in) brings the last workspace back too.
   const applyKey = useCallback(
     async (status: KeyStatus) => {
       setKey(status);
       if (status.present && state.workspace === null && prefs.lastWorkspace) {
-        const opened = await client.openWorkspace(prefs.lastWorkspace).catch(() => null);
-        if (opened) set({ workspace: opened.workspace });
+        const opened = await client.openWorkspace(prefs.lastWorkspace).catch((e) => {
+          reportRefusal(e);
+          return null;
+        });
+        if (opened) {
+          track(opened);
+          set({ workspace: opened.workspace });
+        }
       }
     },
-    [client, prefs.lastWorkspace, set, state.workspace],
+    [client, prefs.lastWorkspace, set, state.workspace, track, reportRefusal],
   );
   const recheckKey = useCallback(
     async () => applyKey(await client.recheckKey()),
@@ -112,20 +155,77 @@ function Shell({ prefs }: { prefs: Prefs }) {
     [client, applyKey],
   );
 
+  const startReview = useCallback(
+    async (workspace: string) => {
+      setReview({ workspace, state: { status: "loading" }, busy: false, error: null });
+      try {
+        const loaded = await client.reviewTrust(workspace);
+        setReview({
+          workspace,
+          state: { status: "ready", review: loaded },
+          busy: false,
+          error: null,
+        });
+      } catch (error) {
+        const message = messageOf(error, "The config could not be read.");
+        setReview({ workspace, state: { status: "error", message }, busy: false, error: null });
+      }
+    },
+    [client],
+  );
+
+  const grantTrust = useCallback(
+    async (acknowledgeHosts: boolean) => {
+      if (review?.state.status !== "ready") return;
+      const { workspace } = review;
+      setReview({ ...review, busy: true, error: null });
+      try {
+        track(
+          await client.trustWorkspace({
+            path: workspace,
+            sha256: review.state.review.sha256,
+            acknowledgeHosts,
+          }),
+        );
+        setReview(null);
+      } catch (error) {
+        const blocked =
+          typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          error.code === "blocked_config";
+        if (blocked) {
+          // The sidecar closed the workspace: it must not stay on screen.
+          setNotice(messageOf(error, "Blocked."));
+          setTrust((before) => ({ ...before, [workspace]: "needs_review" }));
+          if (state.workspace === workspace)
+            set({ workspace: null, view: "home", sessionId: null });
+          setReview(null);
+        } else {
+          setReview({ ...review, busy: false, error: messageOf(error, "Could not trust it.") });
+        }
+      }
+    },
+    [client, review, set, state.workspace, track],
+  );
+
   // Picking a folder and choosing a recent one are the same flow: main opens it restricted.
   const openPath = useCallback(
     async (path: string) => {
       try {
         const opened = await client.openWorkspace(path);
+        track(opened);
         set({ workspace: opened.workspace, view: "home", sessionId: null });
+        if (opened.trust === "needs_review") void startReview(opened.workspace);
         setRecents((before) =>
           [opened.workspace, ...before.filter((p) => p !== opened.workspace)].slice(0, 10),
         );
-      } catch {
+      } catch (error) {
         // The folder could not be opened; the screen stays as it was.
+        reportRefusal(error);
       }
     },
-    [client, set],
+    [client, set, track, reportRefusal, startReview],
   );
   const openFolder = useCallback(async () => {
     const path = await client.pickFolder().catch(() => null);
@@ -138,11 +238,16 @@ function Shell({ prefs }: { prefs: Prefs }) {
   const selectSession = useCallback(
     async (picked: Session) => {
       set({ view: "session", sessionId: picked.id, workspace: picked.workspace });
-      const opened = await client.openWorkspace(picked.workspace).catch(() => null);
-      if (opened) await transcripts.load(picked.workspace, picked.id);
-      else transcripts.markFailed(picked.id);
+      const opened = await client.openWorkspace(picked.workspace).catch((e) => {
+        reportRefusal(e);
+        return null;
+      });
+      if (opened) {
+        track(opened);
+        await transcripts.load(picked.workspace, picked.id);
+      } else transcripts.markFailed(picked.id);
     },
-    [client, set, transcripts],
+    [client, set, transcripts, track, reportRefusal],
   );
 
   // From home: a new session in the open workspace, then its first turn.
@@ -172,9 +277,15 @@ function Shell({ prefs }: { prefs: Prefs }) {
   // After a restart or a reload, the sidecar's own list says which actions still wait.
   useEffect(() => {
     return client.onSidecarState(({ state: sidecar }) => {
-      if (sidecar === "ready") void transcripts.reconcile();
+      if (sidecar !== "ready") return;
+      void transcripts.reconcile();
+      // A restarted sidecar opens everything restricted; each workspace is opened anew so trust is
+      // judged again against the file as it is now.
+      for (const workspace of Object.keys(trustRef.current)) {
+        client.openWorkspace(workspace).then(track, reportRefusal);
+      }
     });
-  }, [client, transcripts.reconcile]);
+  }, [client, transcripts.reconcile, track, reportRefusal]);
 
   const switchProvider = useCallback(
     async (id: string) => {
@@ -212,6 +323,10 @@ function Shell({ prefs }: { prefs: Prefs }) {
       (session && data.running.has(session.id)) ||
       data.sessions.some((s) => s.workspace === sessionWorkspace && data.running.has(s.id)),
   );
+
+  const currentWorkspace = session?.workspace ?? state.workspace;
+  const currentTrust = currentWorkspace ? trust[currentWorkspace] : undefined;
+  const restricted = currentTrust === "needs_review" || currentTrust === "unreadable";
 
   const changesShown = state.changesOpen && state.view !== "settings";
   const scopeEntry = changes[state.changesScope];
@@ -284,7 +399,24 @@ function Shell({ prefs }: { prefs: Prefs }) {
       <TitleBar
         sessionTitle={session ? (session.title ?? "Untitled session") : null}
         totals={changesShown || session ? totals(scopeEntry.files) : null}
+        restricted={restricted}
+        onReviewTrust={() => currentWorkspace && void startReview(currentWorkspace)}
       />
+      {notice && (
+        <div
+          role="alert"
+          className="flex items-center gap-3 border-b border-danger/40 bg-danger-soft px-4 py-2 text-[13px] text-danger"
+        >
+          <span className="min-w-0 flex-1">{notice}</span>
+          <button
+            type="button"
+            onClick={() => setNotice(null)}
+            className="cursor-pointer text-[12.5px] underline"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
       <div className="flex min-h-0 flex-1">
         <IconRail />
         {sidebarShown && (
@@ -299,7 +431,7 @@ function Shell({ prefs }: { prefs: Prefs }) {
         )}
         <main className="min-w-0 flex-1 bg-bg">
           {state.view === "settings" ? (
-            <SettingsView />
+            <SettingsView onForgotten={(opened) => opened && track(opened)} />
           ) : state.view === "session" && session ? (
             <SessionView
               turns={transcripts.state.turns[session.id] ?? []}
@@ -357,6 +489,14 @@ function Shell({ prefs }: { prefs: Prefs }) {
           />
         )}
       </div>
+      <TrustDialog
+        open={review !== null}
+        state={review?.state ?? { status: "loading" }}
+        busy={review?.busy ?? false}
+        error={review?.error ?? null}
+        onRestricted={() => setReview(null)}
+        onTrust={(acknowledge) => void grantTrust(acknowledge)}
+      />
       {session && (
         <>
           <ApprovalDialog

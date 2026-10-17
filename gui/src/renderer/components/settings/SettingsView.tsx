@@ -1,7 +1,11 @@
 import { Check, Monitor, Moon, Sun } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
+import { folderName } from "@/lib/format";
+import { useClient } from "@/state/client-context";
 import { type Theme, useApp } from "@/state/store";
+import type { OpenedWorkspace, TrustedWorkspace } from "../../../shared/api";
 
 /** Fixed colours on purpose: each card previews its own theme regardless of the active one. */
 const PREVIEWS: Record<
@@ -68,7 +72,90 @@ function ThemeCard({ id, label, icon }: { id: Theme; label: string; icon: ReactN
   );
 }
 
-export function SettingsView() {
+/** Workspaces whose config the user trusted, each with Forget (the workspace goes back to restricted). */
+function TrustedWorkspaces({
+  onForgotten,
+}: {
+  onForgotten: (opened: OpenedWorkspace | null) => void;
+}) {
+  const client = useClient();
+  const [list, setList] = useState<TrustedWorkspace[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const load = useCallback(
+    () =>
+      client.trustedWorkspaces().then(
+        (found) => setList(found),
+        () => setError("The list could not be read."),
+      ),
+    [client],
+  );
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const forget = async (workspace: string) => {
+    setError(null);
+    try {
+      onForgotten(await client.forgetTrust(workspace));
+      await load();
+    } catch (e) {
+      setError(e instanceof Object && "message" in e ? String(e.message) : "Could not forget it.");
+    }
+  };
+
+  return (
+    <section className="border-b border-line py-7 last:border-b-0">
+      <h2 className="text-[15px] font-semibold">Trusted workspaces</h2>
+      <p className="mt-0.5 text-[13px] text-muted">
+        Folders whose config you trusted. Trust is tied to the file's content: a change asks again.
+      </p>
+      {error && (
+        <p role="alert" className="mt-3 text-[13px] text-danger">
+          {error}
+        </p>
+      )}
+      {list?.length === 0 && (
+        <p className="mt-4 text-[13px] text-faint">No workspace is trusted.</p>
+      )}
+      {list && list.length > 0 && (
+        <ul
+          aria-label="Trusted workspaces"
+          className="mt-4 divide-y divide-line rounded-[10px] border border-line"
+        >
+          {list.map((w) => (
+            <li key={w.workspace} className="flex items-center gap-3 px-4 py-2.5">
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-[13.5px] font-medium">{folderName(w.workspace)}</div>
+                <div className="truncate font-mono text-[11.5px] text-faint" title={w.workspace}>
+                  {w.workspace}
+                </div>
+                {w.approvedHosts.length > 0 && (
+                  <div className="text-[12px] text-muted">
+                    Key sent to: {w.approvedHosts.join(", ")}
+                  </div>
+                )}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                aria-label={`Forget ${folderName(w.workspace)}`}
+                onClick={() => void forget(w.workspace)}
+              >
+                Forget
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+export function SettingsView({
+  onForgotten,
+}: {
+  onForgotten: (opened: OpenedWorkspace | null) => void;
+}) {
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto w-full max-w-[720px] px-8 py-10">
@@ -85,6 +172,8 @@ export function SettingsView() {
             <ThemeCard id="light" label="Light" icon={<Sun size={15} />} />
           </div>
         </section>
+
+        <TrustedWorkspaces onForgotten={onForgotten} />
       </div>
     </div>
   );

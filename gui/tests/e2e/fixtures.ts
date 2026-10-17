@@ -12,7 +12,11 @@ export interface Stub {
   root: string;
   workspace: string;
   env: Record<string, string>;
-  stubs: { baseline: { provider_url: string; control_url: string } };
+  stubs: {
+    baseline: { provider_url: string; control_url: string };
+    /** A second provider on another port, for configs that redirect the API key. */
+    evil: { provider_url: string; control_url: string };
+  };
 }
 
 export interface Launched {
@@ -58,7 +62,7 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
     async ({}, use) => {
       const child: ChildProcessWithoutNullStreams = spawn(
         required("FAKE_PROVIDER_BIN"),
-        ["serve", "--scenario", scenarioFile],
+        ["serve", "--scenario", scenarioFile, "--stub", "baseline", "--stub", "evil"],
         { stdio: "pipe" },
       );
       const stub = await new Promise<Stub>((resolveLine, reject) => {

@@ -6,6 +6,9 @@ import type { ExternalLinks } from "../external/links";
 import type { KeyResolver } from "../key/resolver";
 import type { Preferences } from "../prefs";
 import type { SidecarSupervisor } from "../sidecar/supervisor";
+import { WorkspaceTrust } from "../trust/flow";
+import type { TrustStore } from "../trust/store";
+import type { ConfigFile } from "../trust/summary";
 import type { KnownWorkspaces } from "./known";
 import type { SenderEvent } from "./sender";
 import { guarded, guardedNoArgs, type TrustContext } from "./validate";
@@ -21,6 +24,9 @@ export interface IpcDeps {
   keys: Pick<KeyResolver, "status" | "resolve" | "setForSession">;
   known: KnownWorkspaces;
   prefs: Pick<Preferences, "get" | "set" | "recordWorkspace">;
+  trustStore: TrustStore;
+  /** Reads the workspace config for hashing; main's own reader unless a test supplies one. */
+  readConfig?: (path: string) => Promise<ConfigFile>;
   links: ExternalLinks;
   appInfo: Omit<AppInfo, "protocol">;
   /** The system folder dialog; only main ever opens it. */
@@ -30,6 +36,21 @@ export interface IpcDeps {
 export function registerIpc(deps: IpcDeps): void {
   const { ipc, trust, supervisor, known, links, keys } = deps;
   const opened = new Set<string>();
+  const workspaces = new WorkspaceTrust({
+    request: (method, params) => supervisor.request(method, params),
+    store: deps.trustStore,
+    readConfig: deps.readConfig,
+    opened: (workspace, open) => {
+      if (open) opened.add(workspace);
+      else opened.delete(workspace);
+      supervisor.setOpenWorkspaces([...opened]);
+    },
+  });
+  // The renderer names a folder; only one main already knows can be opened, reviewed or trusted.
+  const knownPath = (path: string) => {
+    if (!known.has(path))
+      throw new IpcError("unknown_workspace", "that folder was not chosen here");
+  };
 
   ipc.handle(
     channels.appInfo,
@@ -58,19 +79,38 @@ export function registerIpc(deps: IpcDeps): void {
   ipc.handle(
     channels.workspaceOpen,
     guarded(trust, ipcArgs.workspacePath, async ({ path }): Promise<OpenedWorkspace> => {
-      if (!known.has(path))
-        throw new IpcError("unknown_workspace", "that folder was not chosen here");
-      // Always restricted: the renderer never supplies the trust flag.
-      const result = await supervisor.request("workspace.open", {
-        path,
-        trust_workspace_config: false,
-      });
+      knownPath(path);
+      const result = await workspaces.open(path);
       known.add(result.workspace);
-      opened.add(result.workspace);
-      supervisor.setOpenWorkspaces([...opened]);
       await deps.prefs.recordWorkspace(result.workspace).catch(() => undefined);
-      return { workspace: result.workspace, restricted: !result.workspace_config.loaded };
+      return result;
     }),
+  );
+
+  ipc.handle(
+    channels.trustReview,
+    guarded(trust, ipcArgs.workspacePath, ({ path }) => {
+      knownPath(path);
+      return workspaces.review(path);
+    }),
+  );
+
+  ipc.handle(
+    channels.trustGrant,
+    guarded(trust, ipcArgs.trustGrant, (request) => {
+      knownPath(request.path);
+      return workspaces.trust(request);
+    }),
+  );
+
+  ipc.handle(
+    channels.trustList,
+    guardedNoArgs(trust, () => deps.trustStore.list()),
+  );
+
+  ipc.handle(
+    channels.trustForget,
+    guarded(trust, ipcArgs.workspacePath, ({ path }) => workspaces.forget(path)),
   );
 
   ipc.handle(

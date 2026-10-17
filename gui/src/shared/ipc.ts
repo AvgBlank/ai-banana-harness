@@ -8,8 +8,9 @@ export class IpcError extends Error {
   constructor(
     readonly code: string,
     message: string,
+    options?: ErrorOptions,
   ) {
-    super(message);
+    super(message, options);
     this.name = "IpcError";
   }
 }
@@ -56,6 +57,11 @@ export const ipcArgs = {
   }),
   keyForSession: z.strictObject({ key: z.string().trim().min(1).max(512) }),
   workspacePath: z.strictObject({ path }),
+  trustGrant: z.strictObject({
+    path,
+    sha256: z.string().regex(/^[0-9a-f]{64}$/),
+    acknowledgeHosts: z.boolean(),
+  }),
   rpcCall: z.strictObject({ method: z.string(), params: z.record(z.string(), z.unknown()) }),
   externalOpen: z.strictObject({ url: z.string().min(1).max(MAX_STRING_LENGTH) }),
 };
