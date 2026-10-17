@@ -344,6 +344,11 @@ function Shell({ prefs }: { prefs: Prefs }) {
   const currentWorkspace = session?.workspace ?? state.workspace;
   const currentTrust = currentWorkspace ? trust[currentWorkspace] : undefined;
   const restricted = currentTrust === "needs_review" || currentTrust === "unreadable";
+  const restrictedWorkspaces = new Set(
+    Object.entries(trust).flatMap(([workspace, value]) =>
+      value === "needs_review" || value === "unreadable" ? [workspace] : [],
+    ),
+  );
 
   const changesShown = state.changesOpen && state.view !== "settings";
   const scopeEntry = changes[state.changesScope];
@@ -447,13 +452,18 @@ function Shell({ prefs }: { prefs: Prefs }) {
             data={data}
             now={now}
             canOpen={canOpen}
+            restricted={restrictedWorkspaces}
             onOpenFolder={openFolder}
             onSelect={selectSession}
           />
         )}
         <main className="min-w-0 flex-1 bg-bg">
           {state.view === "settings" ? (
-            <SettingsView onForgotten={(opened) => opened && track(opened)} />
+            <SettingsView
+              keyStatus={key}
+              onRecheckKey={recheckKey}
+              onForgotten={(opened) => opened && track(opened)}
+            />
           ) : state.view === "session" && session ? (
             <SessionView
               turns={transcripts.state.turns[session.id] ?? []}

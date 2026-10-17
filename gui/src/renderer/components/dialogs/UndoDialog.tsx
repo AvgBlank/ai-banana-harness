@@ -24,6 +24,7 @@ export function UndoDialog({
     <Dialog open={open}>
       <DialogContent
         title="Undo the last turn?"
+        onEscape={busy ? undefined : onKeep}
         className="w-[min(92vw,500px)]"
         onOpenAutoFocus={(e) => {
           e.preventDefault();

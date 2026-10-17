@@ -15,7 +15,7 @@
 - Functions with more than one parameter of the same type MUST take a single options struct instead of repeated positional parameters.
 - Database changes go in a new numbered `crates/harness-store/migrations/NNNN.sql` appended to `MIGRATIONS`; a shipped migration MUST NOT be edited.
 - Use the domain vocabulary in `CONTEXT.md` (TUI, desktop app, sidecar, headless run, agent, session, turn, interrupted turn, undone turn, thread, required action, provider, workspace, workspace config, restricted mode, workspace trust, guardrail, checkpoint, changes, evaluation issue). A change that introduces or retires a domain term MUST update `CONTEXT.md` in the same change; decisions that are hard to reverse get an ADR in `docs/adr/`.
-- User-visible behaviour (key bindings, slash commands, config keys, guardrails) MUST stay in step across the code, `/help` and `README.md`.
+- User-visible behaviour (key bindings, slash commands, config keys, guardrails) MUST stay in step across the code, `/help`, the desktop app's Settings shortcuts list and `README.md`.
 - Every nested `AGENTS.md` MUST have a sibling `CLAUDE.md` containing only `@AGENTS.md`, so every coding agent loads the same scoped rules.
 
 ## Code comments

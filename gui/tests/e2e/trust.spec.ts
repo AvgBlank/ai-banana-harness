@@ -71,7 +71,7 @@ test("a workspace MCP command never runs while restricted, and a key leak is fla
   await expect(dialog.getByText(/Passes your API key/)).toBeVisible();
   await expect(restrictedButton(app.page)).toBeFocused();
   await restrictedButton(app.page).click();
-  await expect(app.page.getByText("Restricted", { exact: true })).toBeVisible();
+  await expect(app.page.getByRole("banner").getByText("Restricted", { exact: true })).toBeVisible();
 
   await sendPrompt(app.page, "say hi");
   await expect(app.page.getByText("Done.")).toBeVisible();
@@ -96,7 +96,7 @@ test("a base_url override reaches the evil stub only after explicit approval", a
   await sendPrompt(app.page, "say hi");
   await expect(app.page.getByText("From the baseline.")).toBeVisible();
   expect(await requestsTo(stub.stubs.evil.control_url)).toHaveLength(0);
-  await expect(app.page.getByText("Restricted", { exact: true })).toBeVisible();
+  await expect(app.page.getByRole("banner").getByText("Restricted", { exact: true })).toBeVisible();
 
   // Trusting needs the acknowledgement first.
   await app.page.getByRole("button", { name: "Review and trust…" }).click();
@@ -105,7 +105,7 @@ test("a base_url override reaches the evil stub only after explicit approval", a
   await dialog.getByLabel(/My API key will be sent to/).check();
   await trust.click();
   await expect(dialog).toBeHidden();
-  await expect(app.page.getByText("Restricted", { exact: true })).toBeHidden();
+  await expect(app.page.getByRole("banner").getByText("Restricted", { exact: true })).toBeHidden();
 
   // Trusted with approval: the next model call goes to the evil stub, and Settings lists it.
   await app.page.getByRole("button", { name: "New session" }).click();
@@ -211,13 +211,17 @@ test("trust holds across launches until the file changes, even when the agent ch
   await pickFolder(first, stub);
   await first.page.getByRole("dialog").getByRole("button", { name: "Trust and open" }).click();
   await expect(first.page.getByRole("dialog")).toBeHidden();
-  await expect(first.page.getByText("Restricted", { exact: true })).toBeHidden();
+  await expect(
+    first.page.getByRole("banner").getByText("Restricted", { exact: true }),
+  ).toBeHidden();
 
   // The agent edits the trusted config during a turn; the running session is not changed.
   await sendPrompt(first.page, "edit the config");
   await first.page.getByRole("dialog").getByRole("button", { name: "Allow once" }).click();
   await expect(first.page.getByText("Edited the config.")).toBeVisible();
-  await expect(first.page.getByText("Restricted", { exact: true })).toBeHidden();
+  await expect(
+    first.page.getByRole("banner").getByText("Restricted", { exact: true }),
+  ).toBeHidden();
   expect(readFileSync(configFile(stub), "utf8")).toBe(edited);
   await first.app.close();
 
@@ -231,7 +235,9 @@ test("trust holds across launches until the file changes, even when the agent ch
     .getByRole("dialog")
     .getByRole("button", { name: "Open in restricted mode" })
     .click();
-  await expect(second.page.getByText("Restricted", { exact: true })).toBeVisible();
+  await expect(
+    second.page.getByRole("banner").getByText("Restricted", { exact: true }),
+  ).toBeVisible();
   await second.app.close();
 
   // The file the user trusted, restored byte for byte, opens trusted again with no dialog.
@@ -239,7 +245,9 @@ test("trust holds across launches until the file changes, even when the agent ch
   const third = await launch();
   await pickFolder(third, stub);
   await expect(third.page.getByRole("dialog")).toBeHidden();
-  await expect(third.page.getByText("Restricted", { exact: true })).toBeHidden();
+  await expect(
+    third.page.getByRole("banner").getByText("Restricted", { exact: true }),
+  ).toBeHidden();
 });
 
 test("forgetting trust in Settings returns the workspace to restricted mode", async ({
@@ -259,7 +267,7 @@ test("forgetting trust in Settings returns the workspace to restricted mode", as
     .getByRole("button", { name: `Forget ${name}` })
     .click();
   await expect(app.page.getByText("No workspace is trusted.")).toBeVisible();
-  await expect(app.page.getByText("Restricted", { exact: true })).toBeVisible();
+  await expect(app.page.getByRole("banner").getByText("Restricted", { exact: true })).toBeVisible();
   const stored = JSON.parse(readFileSync(join(app.userData, "trust.json"), "utf8"));
   expect(stored.workspaces).toEqual({});
 });
@@ -289,5 +297,5 @@ test("trusting is refused by main while a turn runs, and the workspace stays res
   await restrictedButton(app.page).click();
   await fetch(`${stub.stubs.baseline.control_url}/release/mid-stream`, { method: "POST" });
   await expect(app.page.getByText("A slow answer.")).toBeVisible();
-  await expect(app.page.getByText("Restricted", { exact: true })).toBeVisible();
+  await expect(app.page.getByRole("banner").getByText("Restricted", { exact: true })).toBeVisible();
 });

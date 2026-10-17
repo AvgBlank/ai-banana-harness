@@ -72,6 +72,10 @@ DeepSeek/Qwen), `/undo` (restore the workspace to the last turn's checkpoint), `
 Typing `/` shows matching commands as you type: `↑`/`↓` pick one, `Tab` completes it, `Enter`
 runs it, `Esc` hides the list.
 
+The desktop app has three keys, listed in its Settings: `Enter` sends the message, `Shift+Enter`
+inserts a newline, and `Esc` closes a dialog that can be dismissed (the undo and trust dialogs).
+Approvals and questions need an answer and ignore `Esc`.
+
 ## Guardrails
 
 Every host tool goes through a permission engine (`[permission]` in config): each of `read`,

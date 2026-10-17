@@ -71,6 +71,7 @@ export function TrustDialog({
     <Dialog open={open}>
       <DialogContent
         title="Trust this workspace's config?"
+        onEscape={busy ? undefined : onRestricted}
         description="The folder has its own configuration. It is loaded only if you trust it."
         className="w-[min(92vw,640px)]"
         onOpenAutoFocus={(e) => {

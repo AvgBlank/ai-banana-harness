@@ -5,9 +5,11 @@ import {
   FolderPlus,
   Pencil,
   Search,
+  ShieldAlert,
   SquarePen,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
 import { folderName, relativeTime } from "@/lib/format";
@@ -47,6 +49,7 @@ export function Sidebar({
   data,
   now,
   canOpen,
+  restricted,
   onOpenFolder,
   onSelect,
 }: {
@@ -54,6 +57,8 @@ export function Sidebar({
   data: SessionsData;
   now: number;
   canOpen: boolean;
+  /** Workspaces with a config that is not trusted, so they run restricted. */
+  restricted: ReadonlySet<string>;
   onOpenFolder: () => void;
   onSelect: (session: Session) => void;
 }) {
@@ -142,6 +147,14 @@ export function Sidebar({
                 <span className="min-w-0 flex-1 truncate" title={workspace}>
                   {folderName(workspace)}
                 </span>
+                {restricted.has(workspace) && (
+                  <Tooltip label="Workspace config is not loaded">
+                    <Badge tone="peel" className="gap-1">
+                      <ShieldAlert size={11} />
+                      Restricted
+                    </Badge>
+                  </Tooltip>
+                )}
               </button>
               {open && (
                 <ul className="ml-4 border-l border-line pl-2">

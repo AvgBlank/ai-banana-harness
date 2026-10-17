@@ -1,11 +1,13 @@
-import { Check, Monitor, Moon, Sun } from "lucide-react";
+import { Check, KeyRound, Monitor, Moon, RefreshCw, Sun } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Kbd } from "@/components/ui/kbd";
 import { cn } from "@/lib/cn";
 import { folderName } from "@/lib/format";
 import { useClient } from "@/state/client-context";
 import { type Theme, useApp } from "@/state/store";
-import type { OpenedWorkspace, TrustedWorkspace } from "../../../shared/api";
+import type { AppInfo, KeyStatus, OpenedWorkspace, TrustedWorkspace } from "../../../shared/api";
 
 /** Fixed colours on purpose: each card previews its own theme regardless of the active one. */
 const PREVIEWS: Record<
@@ -72,6 +74,113 @@ function ThemeCard({ id, label, icon }: { id: Theme; label: string; icon: ReactN
   );
 }
 
+function Block({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
+  return (
+    <section className="border-b border-line py-7 last:border-b-0">
+      <h2 className="text-[15px] font-semibold">{title}</h2>
+      {hint && <p className="mt-0.5 text-[13px] text-muted">{hint}</p>}
+      <div className="mt-4">{children}</div>
+    </section>
+  );
+}
+
+const KEY_SOURCES: Record<KeyStatus["source"], string> = {
+  env: "environment",
+  login_shell: "login shell",
+  session: "this session only",
+  none: "missing",
+};
+
+/** Whether a key exists and where it came from; the value never reaches the renderer. */
+function ApiKey({
+  status,
+  onRecheck,
+}: {
+  status: KeyStatus | null;
+  onRecheck: () => Promise<void>;
+}) {
+  const [checking, setChecking] = useState(false);
+  const present = status?.present ?? false;
+  return (
+    <Block
+      title="API key"
+      hint="Read from the AI_API_KEY environment variable. It is never stored by the app."
+    >
+      <div className="flex items-center gap-3 rounded-[12px] border border-line bg-s1 px-4 py-3">
+        <span className="grid h-9 w-9 place-items-center rounded-[9px] bg-s3 text-muted">
+          <KeyRound size={17} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 text-[14px] font-medium">
+            {status === null ? "Checking…" : present ? "Key found" : "No key found"}
+            {status && <Badge tone={present ? "ok" : "warn"}>{KEY_SOURCES[status.source]}</Badge>}
+          </div>
+          <div className="text-[12.5px] text-muted">The value is never shown here.</div>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={checking}
+          onClick={async () => {
+            setChecking(true);
+            await onRecheck().catch(() => undefined);
+            setChecking(false);
+          }}
+        >
+          <RefreshCw size={13} />
+          Check again
+        </Button>
+      </div>
+    </Block>
+  );
+}
+
+/** The keys that exist; a new one is added here, in the code and in the README together. */
+const SHORTCUTS: Array<[string, string[]]> = [
+  ["Send message", ["↵"]],
+  ["New line", ["⇧", "↵"]],
+  ["Close a dialog that can be dismissed", ["Esc"]],
+];
+
+function Shortcuts() {
+  return (
+    <Block title="Keyboard shortcuts">
+      <ul className="grid grid-cols-2 gap-x-8 gap-y-2.5 text-[13px]">
+        {SHORTCUTS.map(([label, keys]) => (
+          <li key={label} className="flex items-center justify-between">
+            <span className="text-muted">{label}</span>
+            <span className="flex gap-1">
+              {keys.map((k) => (
+                <Kbd key={k}>{k}</Kbd>
+              ))}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </Block>
+  );
+}
+
+function About() {
+  const client = useClient();
+  const [info, setInfo] = useState<AppInfo | null>(null);
+  useEffect(() => {
+    client.appInfo().then(setInfo, () => undefined);
+  }, [client]);
+  return (
+    <Block title="About">
+      <dl className="grid grid-cols-[120px_1fr] gap-y-1.5 text-[13px]">
+        <dt className="text-muted">App</dt>
+        <dd>{info ? `${info.name} ${info.version}` : "…"}</dd>
+        <dt className="text-muted">Protocol</dt>
+        <dd>{info?.protocol ?? "…"}</dd>
+        <dt className="text-muted">Sidecar</dt>
+        <dd className="font-mono text-[12px]">serve --stdio</dd>
+      </dl>
+    </Block>
+  );
+}
+
 /** Workspaces whose config the user trusted, each with Forget (the workspace goes back to restricted). */
 function TrustedWorkspaces({
   onForgotten,
@@ -104,11 +213,10 @@ function TrustedWorkspaces({
   };
 
   return (
-    <section className="border-b border-line py-7 last:border-b-0">
-      <h2 className="text-[15px] font-semibold">Trusted workspaces</h2>
-      <p className="mt-0.5 text-[13px] text-muted">
-        Folders whose config you trusted. Trust is tied to the file's content: a change asks again.
-      </p>
+    <Block
+      title="Trusted workspaces"
+      hint="Folders whose config you trusted. Trust is tied to the file's content: a change asks again. Forgetting one puts it back in restricted mode."
+    >
       {error && (
         <p role="alert" className="mt-3 text-[13px] text-danger">
           {error}
@@ -147,13 +255,17 @@ function TrustedWorkspaces({
           ))}
         </ul>
       )}
-    </section>
+    </Block>
   );
 }
 
 export function SettingsView({
+  keyStatus,
+  onRecheckKey,
   onForgotten,
 }: {
+  keyStatus: KeyStatus | null;
+  onRecheckKey: () => Promise<void>;
   onForgotten: (opened: OpenedWorkspace | null) => void;
 }) {
   return (
@@ -161,19 +273,24 @@ export function SettingsView({
       <div className="mx-auto w-full max-w-[720px] px-8 py-10">
         <h1 className="text-[26px] font-semibold tracking-tight">Settings</h1>
 
-        <section className="border-b border-line py-7 last:border-b-0">
-          <h2 className="text-[15px] font-semibold">Appearance</h2>
-          <p className="mt-0.5 text-[13px] text-muted">
-            Choose how the app looks. Your choice is remembered on this Mac.
-          </p>
-          <div className="mt-4 grid grid-cols-3 gap-3">
+        <Block
+          title="Appearance"
+          hint="Choose how the app looks. Your choice is remembered on this Mac."
+        >
+          <div className="grid grid-cols-3 gap-3">
             <ThemeCard id="system" label="System" icon={<Monitor size={15} />} />
             <ThemeCard id="dark" label="Dark" icon={<Moon size={15} />} />
             <ThemeCard id="light" label="Light" icon={<Sun size={15} />} />
           </div>
-        </section>
+        </Block>
+
+        <ApiKey status={keyStatus} onRecheck={onRecheckKey} />
 
         <TrustedWorkspaces onForgotten={onForgotten} />
+
+        <Shortcuts />
+
+        <About />
       </div>
     </div>
   );

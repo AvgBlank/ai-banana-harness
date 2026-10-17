@@ -73,13 +73,35 @@ describe("the trust dialog", () => {
       ),
     );
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(screen.getByText("Restricted")).toBeTruthy();
+    expect(within(screen.getByRole("banner")).getByText("Restricted")).toBeTruthy();
     expect(client.trustWorkspace).not.toHaveBeenCalled();
     await act(async () =>
       fireEvent.click(screen.getByRole("button", { name: "Review and trust…" })),
     );
     expect(await screen.findByRole("dialog")).toBeTruthy();
     expect(client.reviewTrust).toHaveBeenCalledTimes(2);
+  });
+
+  test("the sidebar marks a restricted workspace and stops once it is trusted", async () => {
+    await open();
+    await act(async () =>
+      fireEvent.click(
+        within(await screen.findByRole("dialog")).getByRole("button", {
+          name: "Open in restricted mode",
+        }),
+      ),
+    );
+    const sidebar = screen.getByRole("complementary", { name: "Workspaces and sessions" });
+    expect(within(sidebar).getByText("Restricted")).toBeTruthy();
+    await act(async () =>
+      fireEvent.click(screen.getByRole("button", { name: "Review and trust…" })),
+    );
+    await act(async () =>
+      fireEvent.click(
+        within(await screen.findByRole("dialog")).getByRole("button", { name: "Trust and open" }),
+      ),
+    );
+    expect(within(sidebar).queryByText("Restricted")).toBeNull();
   });
 
   test("the raw file can be viewed", async () => {
@@ -103,7 +125,7 @@ describe("the trust dialog", () => {
       acknowledgeHosts: false,
     });
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(screen.queryByText("Restricted")).toBeNull();
+    expect(within(screen.getByRole("banner")).queryByText("Restricted")).toBeNull();
   });
 
   test("a new destination needs the checkbox before Trust and open works", async () => {
@@ -190,13 +212,13 @@ describe("the trust dialog", () => {
   test("a trusted or config-free folder shows no dialog and no chip", async () => {
     await open({ trust: { [WS]: "trusted" } });
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(screen.queryByText("Restricted")).toBeNull();
+    expect(within(screen.getByRole("banner")).queryByText("Restricted")).toBeNull();
   });
 
   test("an unreadable config shows the chip without a dialog", async () => {
     await open({ trust: { [WS]: "unreadable" } });
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(screen.getByText("Restricted")).toBeTruthy();
+    expect(within(screen.getByRole("banner")).getByText("Restricted")).toBeTruthy();
   });
 });
 
