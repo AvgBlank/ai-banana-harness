@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import type { Launched, Stub } from "./fixtures";
 import { expect, test } from "./fixtures";
@@ -112,4 +114,100 @@ test("a rename is kept by the sidecar", async ({ launch, stub, queueAnswer }) =>
   await expect(sidebar.getByText("A better name")).toBeVisible();
   await app.page.reload();
   await expect(sidebar.getByText("A better name")).toBeVisible();
+});
+
+/** The scenario's own replies, so the UI tests and every other seam run the same script. */
+function scenarioReplies(name: string): unknown[] {
+  const file = join(__dirname, "../../../crates/harness-testkit/scenarios", `${name}.json`);
+  return (JSON.parse(readFileSync(file, "utf8")) as { replies: unknown[] }).replies;
+}
+
+/**
+ * Answers every approval request with Allow through the real protocol. The approval dialog is a
+ * later feature; until it exists, the test plays the user's part so the turn can run.
+ */
+async function allowEverything(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    window.banana.on("sidecarEvent", (payload) => {
+      const frame = payload as {
+        workspace: string;
+        session_id: string;
+        event: { type: string; action_id?: string };
+      };
+      if (frame.event.type !== "tool.approval_required") return;
+      void window.banana.rpc.call("action.reply", {
+        workspace: frame.workspace,
+        session_id: frame.session_id,
+        action_id: frame.event.action_id as string,
+        answer: "allow",
+      });
+    });
+  });
+}
+
+test("bash-and-test: the command card shows its exit chip and survives a reload and resume", async ({
+  launch,
+  stub,
+  queueReplies,
+}) => {
+  await queueReplies(scenarioReplies("bash-and-test"));
+  const app = await launch();
+  await openFolder(app, stub);
+  await allowEverything(app.page);
+  await sendPrompt(app.page, "run the check");
+
+  await expect(app.page.getByText("The check printed ok.")).toBeVisible();
+  const card = app.page.getByRole("button", { name: /bash/ });
+  await expect(card).toContainText("sh check.sh");
+  await expect(card).toContainText("exit 0");
+  await card.click();
+  await expect(app.page.getByText("ok", { exact: true })).toBeVisible();
+
+  // The stub saw the tool result go back to the model.
+  const seen = await requests(stub);
+  expect(seen).toHaveLength(2);
+  expect(JSON.stringify(seen[1]?.body.messages)).toContain("ok");
+
+  // The same card from the stored events.
+  await app.page.reload();
+  const sidebar = app.page.getByRole("complementary", { name: "Workspaces and sessions" });
+  await sidebar
+    .getByRole("button", { name: /run the check/ })
+    .first()
+    .click();
+  const replayed = app.page.getByRole("button", { name: /bash/ });
+  await expect(replayed).toContainText("exit 0");
+  await expect(app.page.getByText("The check printed ok.")).toBeVisible();
+});
+
+test("subagents: two children nest in their own cards and nothing leaks to the root", async ({
+  launch,
+  stub,
+  queueReplies,
+}) => {
+  await queueReplies(scenarioReplies("subagents"));
+  const app = await launch();
+  await openFolder(app, stub);
+  await sendPrompt(app.page, "split the work");
+
+  await expect(app.page.getByText("Both subagents finished.")).toBeVisible();
+  const alpha = app.page.getByRole("region", { name: "Subagent alpha" });
+  const beta = app.page.getByRole("region", { name: "Subagent beta" });
+  await expect(alpha.getByText("alpha done")).toBeVisible();
+  await expect(beta.getByText("beta done")).toBeVisible();
+  await expect(app.page.getByText("alpha done")).toHaveCount(1);
+  await expect(app.page.getByText("done", { exact: true })).toHaveCount(2);
+
+  await app.page.reload();
+  const sidebar = app.page.getByRole("complementary", { name: "Workspaces and sessions" });
+  await sidebar
+    .getByRole("button", { name: /split the work/ })
+    .first()
+    .click();
+  await expect(
+    app.page.getByRole("region", { name: "Subagent alpha" }).getByText("alpha done"),
+  ).toBeVisible();
+  await expect(
+    app.page.getByRole("region", { name: "Subagent beta" }).getByText("beta done"),
+  ).toBeVisible();
 });

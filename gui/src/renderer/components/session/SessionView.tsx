@@ -1,35 +1,11 @@
 import { ArrowDown, TriangleAlert } from "lucide-react";
-import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Composer } from "@/components/home/Composer";
-import type { TurnView } from "@/state/reduceTurn";
+import { summarize, type TurnView } from "@/state/reduceTurn";
+import { useApp } from "@/state/store";
 import type { LoadStatus } from "@/state/transcripts";
-
-/** Renders `code` spans from backticks; a Markdown renderer arrives with the full transcript. */
-function RichText({ text }: { text: string }) {
-  // Keyed by where each part starts in the text, which is unique and stable.
-  let offset = 0;
-  const parts = text.split(/(`[^`]+`)/g).map((part) => {
-    const key = offset;
-    offset += part.length;
-    return { key, part };
-  });
-  return (
-    <>
-      {parts.map(({ key, part }) =>
-        part.startsWith("`") && part.length > 1 ? (
-          <code
-            key={key}
-            className="rounded-[5px] bg-s3 px-1.5 py-0.5 font-mono text-[12.5px] text-fg"
-          >
-            {part.slice(1, -1)}
-          </code>
-        ) : (
-          <Fragment key={key}>{part}</Fragment>
-        ),
-      )}
-    </>
-  );
-}
+import { ItemList } from "./SubagentGroup";
+import { TurnSummary } from "./TurnSummary";
 
 function UserMessage({ children }: { children: ReactNode }) {
   return (
@@ -151,20 +127,12 @@ export function SessionView({
 }
 
 function TurnBlock({ turn }: { turn: TurnView }) {
+  const { set } = useApp();
   const streaming = turn.status === "running";
-  const last = turn.items.length - 1;
   return (
     <>
       <UserMessage>{turn.input}</UserMessage>
-      {turn.items.map((item, i) => (
-        <p
-          key={`${item.threadId}-${item.messageId}`}
-          className="whitespace-pre-wrap text-[14.5px] leading-relaxed text-fg/90"
-        >
-          <RichText text={item.text} />
-          {streaming && i === last && !item.final && <span className="caret" aria-hidden />}
-        </p>
-      ))}
+      <ItemList items={turn.items} turn={turn} streaming={streaming} />
       {turn.status === "cancelled" && <p className="text-[12px] text-faint">Stopped.</p>}
       {turn.status === "interrupted" && (
         <div
@@ -180,6 +148,9 @@ function TurnBlock({ turn }: { turn: TurnView }) {
             </div>
           </div>
         </div>
+      )}
+      {turn.status !== "running" && (
+        <TurnSummary summary={summarize(turn)} onViewChanges={() => set({ changesOpen: true })} />
       )}
       {turn.status === "error" && (
         <div

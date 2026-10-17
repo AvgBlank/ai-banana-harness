@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import {
   type CoreEvent,
+  type Item,
   optimisticTurn,
   reduceTurn,
   turnFromRecord,
@@ -34,6 +35,7 @@ const LIVE: CoreEvent[] = [
 /** What is persisted: no start marker, no deltas. */
 const PERSISTED = LIVE.filter((e) => e.type !== "model.message.delta" && !(e.id === "e2"));
 
+const texts = (items: Item[]) => items.flatMap((i) => (i.kind === "assistant" ? [i.text] : []));
 const run = (events: CoreEvent[], from = optimisticTurn("say hi")) =>
   events.reduce(reduceTurn, from);
 const strip = (t: ReturnType<typeof run>) => ({ ...t, seen: undefined });
@@ -82,7 +84,7 @@ describe("reduceTurn", () => {
     expect(replayedLive.items).toEqual(resumed.items);
     // A partial prefix first, then the authoritative final repairs missing deltas.
     const partial = run([LIVE[1] as CoreEvent, LIVE[3] as CoreEvent, final("e5", "Hello there!")]);
-    expect(partial.items[0]?.text).toBe("Hello there!");
+    expect(texts(partial.items)[0]).toBe("Hello there!");
   });
 
   test("an empty final message is removed so a tool-only round renders nothing", () => {
@@ -116,7 +118,7 @@ describe("reduceTurn", () => {
         message: { content: "two", finish_reason: "stop", usage },
       }),
     ]);
-    expect(turn.items.map((i) => i.text)).toEqual(["one", "two"]);
+    expect(texts(turn.items)).toEqual(["one", "two"]);
   });
 });
 
@@ -154,6 +156,6 @@ describe("turnFromRecord", () => {
       .map((f) => f.event as CoreEvent);
     const turn = events.reduce(reduceTurn, optimisticTurn("say hi"));
     expect(turn.status).toBe("done");
-    expect(turn.items.map((i) => i.text)).toEqual(["Hello there!"]);
+    expect(texts(turn.items)).toEqual(["Hello there!"]);
   });
 });
