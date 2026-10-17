@@ -57,6 +57,7 @@ export const ipcArgs = {
   }),
   keyForSession: z.strictObject({ key: z.string().trim().min(1).max(512) }),
   workspacePath: z.strictObject({ path }),
+  liveAttach: z.strictObject({ workspace: path, sessionId: z.string().min(1).max(64) }),
   trustGrant: z.strictObject({
     path,
     sha256: z.string().regex(/^[0-9a-f]{64}$/),

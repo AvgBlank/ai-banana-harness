@@ -2,9 +2,11 @@ import type {
   AppInfo,
   BananaApi,
   KeyStatus,
+  LiveAttach,
   OpenedWorkspace,
   Prefs,
   PrefsPatch,
+  SidecarState,
   TrustedWorkspace,
   TrustReview,
 } from "../../shared/api";
@@ -20,9 +22,6 @@ import type {
 /** A reply to a required action, as the sidecar takes it. */
 export type Answer = "allow" | "allow_for_session" | "deny" | { text: string };
 
-/** The sidecar state main pushes, as far as the shell reads it. */
-export type SidecarStatus = { state: string };
-
 /**
  * Everything the renderer asks of the outside world, in one typed place. Components get it from
  * context, so a test supplies a fake and no component reaches for `window.banana`.
@@ -36,8 +35,13 @@ export interface Client {
   /** Hands a typed key to main, which keeps it in memory and restarts the sidecar with it. */
   setSessionKey(key: string): Promise<KeyStatus>;
   listSessions(): Promise<Session[]>;
-  /** Session ids with a turn running now. */
-  runningSessions(): Promise<string[]>;
+  /** The turn running in each workspace, if any. */
+  activeTurns(): Promise<Array<{ workspace: string; sessionId: string; turnId: string | null }>>;
+  /** Frames of the session's current or last turn from main's buffer, and its running turn id. */
+  attachLive(workspace: string, sessionId: string): Promise<LiveAttach>;
+  /** Where the sidecar is now. */
+  sidecarState(): Promise<SidecarState>;
+  restartSidecar(): Promise<void>;
   renameSession(workspace: string, sessionId: string, title: string): Promise<Session>;
   providers(workspace: string): Promise<{ providers: ProviderOption[]; default: string }>;
   createSession(workspace: string, provider?: string): Promise<Session>;
@@ -69,7 +73,7 @@ export interface Client {
   }): Promise<OpenedWorkspace>;
   trustedWorkspaces(): Promise<TrustedWorkspace[]>;
   forgetTrust(path: string): Promise<OpenedWorkspace | null>;
-  onSidecarState(listener: (status: SidecarStatus) => void): () => void;
+  onSidecarState(listener: (status: SidecarState) => void): () => void;
 }
 
 export function clientFor(banana: BananaApi): Client {
@@ -83,10 +87,21 @@ export function clientFor(banana: BananaApi): Client {
     recheckKey: () => banana.key.recheck(),
     setSessionKey: (key) => banana.key.setForSession(key),
     listSessions: async () => (await call("session.list", {})).sessions,
-    runningSessions: async () =>
+    activeTurns: async () =>
       (await call("workspace.list", {})).workspaces.flatMap((w) =>
-        w.active_turn ? [w.active_turn.session_id] : [],
+        w.active_turn
+          ? [
+              {
+                workspace: w.workspace,
+                sessionId: w.active_turn.session_id,
+                turnId: w.active_turn.turn_id,
+              },
+            ]
+          : [],
       ),
+    attachLive: (workspace, sessionId) => banana.live.attach(workspace, sessionId),
+    sidecarState: () => banana.sidecar.state(),
+    restartSidecar: () => banana.sidecar.restart(),
     renameSession: async (workspace, session_id, title) =>
       (await call("session.rename", { workspace, session_id, title })).session,
     providers: (workspace) => call("provider.list", { workspace }),
@@ -131,6 +146,6 @@ export function clientFor(banana: BananaApi): Client {
     trustedWorkspaces: () => banana.workspace.trusted(),
     forgetTrust: (path) => banana.workspace.forget(path),
     onSidecarState: (listener) =>
-      banana.on("sidecarState", (payload) => listener(payload as SidecarStatus)),
+      banana.on("sidecarState", (payload) => listener(payload as SidecarState)),
   };
 }

@@ -34,8 +34,8 @@ export function useSessions(): SessionsData {
     async (attempt: number) => {
       clearTimeout(timer.current);
       try {
-        const [list, active] = await Promise.all([client.listSessions(), client.runningSessions()]);
-        const ids = new Set(active);
+        const [list, active] = await Promise.all([client.listSessions(), client.activeTurns()]);
+        const ids = new Set(active.map((turn) => turn.sessionId));
         runningNow.current = ids;
         setSessions(list);
         setRunning(ids);
@@ -53,7 +53,7 @@ export function useSessions(): SessionsData {
     void load(1);
     const stop = client.onSidecarState(({ state }) => {
       if (state === "ready") void load(1);
-      if (state === "crashed") {
+      if (state === "crashed" || state === "failed") {
         // Whatever was running died with the process; the transcript will say so on resume.
         setInterrupted((before) => new Set([...before, ...runningNow.current]));
         runningNow.current = new Set();

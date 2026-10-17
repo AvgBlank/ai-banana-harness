@@ -6,6 +6,7 @@ import {
   type CoreEvent,
   clearPending,
   dropAction,
+  interruptTurn,
   optimisticTurn,
   type PendingAction,
   reduceTurn,
@@ -24,7 +25,21 @@ export interface TranscriptState {
 
 type Action =
   | { type: "loading"; sessionId: string }
-  | { type: "loaded"; sessionId: string; turns: TurnView[] }
+  | {
+      type: "loaded";
+      sessionId: string;
+      turns: TurnView[];
+      /** The workspace's running turn when it belongs to this session. */
+      active: { workspace: string } | null;
+    }
+  | {
+      type: "attached";
+      workspace: string;
+      sessionId: string;
+      frames: EventFrame[];
+      activeTurnId: string | null;
+    }
+  | { type: "interrupt_all" }
   | { type: "load_failed"; sessionId: string }
   | { type: "sent"; workspace: string; sessionId: string; input: string }
   | { type: "send_failed"; workspace: string; sessionId: string }
@@ -73,8 +88,43 @@ export function transcriptReducer(state: TranscriptState, action: Action): Trans
         ...state,
         turns: { ...state.turns, [action.sessionId]: [...action.turns, ...keep] },
         load: { ...state.load, [action.sessionId]: "ready" },
+        active: action.active
+          ? {
+              ...state.active,
+              [action.active.workspace]: {
+                sessionId: action.sessionId,
+                stopping: state.active[action.active.workspace]?.stopping ?? false,
+              },
+            }
+          : state.active,
       };
     }
+    case "attached": {
+      // A session that is not on screen only learns that its workspace has a turn running.
+      const loaded = state.turns[action.sessionId] !== undefined;
+      const applied = loaded ? action.frames.reduce(applyFrame, state) : state;
+      return {
+        ...applied,
+        active: action.activeTurnId
+          ? {
+              ...applied.active,
+              [action.workspace]: { sessionId: action.sessionId, stopping: false },
+            }
+          : applied.active,
+      };
+    }
+    case "interrupt_all":
+      // The process is gone: no `turn.done` will come, and nothing is still waiting.
+      return {
+        ...state,
+        turns: Object.fromEntries(
+          Object.entries(state.turns).map(([id, list]) => [
+            id,
+            list.map((t) => (t.status === "running" ? interruptTurn(t) : t)),
+          ]),
+        ),
+        active: {},
+      };
     case "load_failed":
       return { ...state, load: { ...state.load, [action.sessionId]: "error" } };
     case "sent":
@@ -167,6 +217,10 @@ export interface Transcripts {
   reply(workspace: string, sessionId: string, actionId: string, answer: Answer): Promise<void>;
   /** Drops the pending actions the sidecar no longer lists. */
   reconcile(): Promise<void>;
+  /** Attaches to every workspace's running turn, as the window starts or the sidecar returns. */
+  catchUp(): Promise<void>;
+  /** The sidecar died: every running turn is interrupted and nothing is pending. */
+  interruptAll(): void;
   /** The session could not be opened, so its turns cannot be read. */
   markFailed(sessionId: string): void;
 }
@@ -237,11 +291,18 @@ export function useTranscripts(onFrame: (info: FrameInfo) => void): Transcripts 
       dispatch({ type: "loading", sessionId });
       try {
         const { turns } = await client.resume(workspace, sessionId);
+        // Attached after the resume, so a turn that ended in between still arrives with its end.
+        const live = await client
+          .attachLive(workspace, sessionId)
+          .catch(() => ({ frames: [], activeTurnId: null }));
         dispatch({
           type: "loaded",
           sessionId,
-          turns: turns.map((t) => turnFromRecord(t as never)),
+          turns: turns.map((t) => turnFromRecord(t as never, live.activeTurnId)),
+          active: live.activeTurnId ? { workspace } : null,
         });
+        // Frames the stored turns already hold are dropped by their event ids.
+        if (live.frames.length > 0) dispatch({ type: "frames", frames: live.frames });
       } catch {
         dispatch({ type: "load_failed", sessionId });
       }
@@ -294,12 +355,33 @@ export function useTranscripts(onFrame: (info: FrameInfo) => void): Transcripts 
 
   reconcileRef.current = reconcile;
 
+  const catchUp = useCallback(async () => {
+    const running = await client.activeTurns().catch(() => []);
+    for (const { workspace, sessionId } of running) {
+      const live = await client.attachLive(workspace, sessionId).catch(() => null);
+      if (live) dispatch({ type: "attached", workspace, sessionId, ...live });
+    }
+  }, [client]);
+
+  const interruptAll = useCallback(() => dispatch({ type: "interrupt_all" }), []);
+
   const markFailed = useCallback(
     (sessionId: string) => dispatch({ type: "load_failed", sessionId }),
     [],
   );
 
-  return { state, load, send, stop, reply, reconcile, applyEvent, markFailed };
+  return {
+    state,
+    load,
+    send,
+    stop,
+    reply,
+    reconcile,
+    applyEvent,
+    markFailed,
+    catchUp,
+    interruptAll,
+  };
 }
 
 /** Every pending action across a session's turns, oldest first. */

@@ -1,4 +1,5 @@
 import { IpcError } from "../../shared/ipc";
+import type { EventFrame } from "../../shared/protocol";
 
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
@@ -22,6 +23,11 @@ export function parseExternalUrl(raw: string): URL {
     throw new IpcError("invalid_url", "links with credentials are not opened");
   }
   return url;
+}
+
+/** The login address a remote MCP server asked to have opened; it goes through `ExternalLinks`. */
+export function authLinkOf(frame: EventFrame): string | null {
+  return frame.event.type === "mcp.auth_required" ? String(frame.event.url) : null;
 }
 
 export interface LinkPorts {

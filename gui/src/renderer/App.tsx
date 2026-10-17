@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { CrashBanner } from "@/components/banners/CrashBanner";
 import { ChangesPanel, pickFile, totals } from "@/components/changes/ChangesPanel";
 import { ApprovalDialog } from "@/components/dialogs/ApprovalDialog";
 import { QuestionDialog } from "@/components/dialogs/QuestionDialog";
@@ -16,7 +17,7 @@ import { useClient } from "@/state/client-context";
 import { useSessions } from "@/state/sessions";
 import { StateProvider, useApp } from "@/state/store";
 import { pendingOf, useTranscripts } from "@/state/transcripts";
-import type { KeyStatus, OpenedWorkspace, Prefs, TrustState } from "../shared/api";
+import type { KeyStatus, OpenedWorkspace, Prefs, SidecarState, TrustState } from "../shared/api";
 import type { Session } from "../shared/protocol";
 
 const NARROW = "(max-width: 1279px)";
@@ -70,6 +71,7 @@ function Shell({ prefs }: { prefs: Prefs }) {
   const [appName, setAppName] = useState("");
   const [provider, setProvider] = useState<string | null>(null);
   const [key, setKey] = useState<KeyStatus | null>(null);
+  const [sidecar, setSidecar] = useState<SidecarState>({ state: "starting" });
   const [trust, setTrust] = useState<Record<string, TrustState>>({});
   const trustRef = useRef(trust);
   trustRef.current = trust;
@@ -274,18 +276,33 @@ function Shell({ prefs }: { prefs: Prefs }) {
   const nextAction = pending[0];
   const approvals = pending.filter((a) => a.kind === "approval");
 
-  // After a restart or a reload, the sidecar's own list says which actions still wait.
+  // The sidecar's state drives recovery. A crash interrupts what was running; a return resumes the
+  // visible session from the database and attaches to running turns. A reloaded window asks for
+  // the current state once, so it does not wait for a push that already happened.
+  const visibleRef = useRef(session);
+  visibleRef.current = session;
+  const { reconcile, load, catchUp, interruptAll } = transcripts;
   useEffect(() => {
-    return client.onSidecarState(({ state: sidecar }) => {
-      if (sidecar !== "ready") return;
-      void transcripts.reconcile();
+    const onState = (status: SidecarState) => {
+      setSidecar(status);
+      if (status.state === "crashed" || status.state === "failed") {
+        interruptAll();
+        return;
+      }
+      if (status.state !== "ready") return;
+      void reconcile();
       // A restarted sidecar opens everything restricted; each workspace is opened anew so trust is
       // judged again against the file as it is now.
       for (const workspace of Object.keys(trustRef.current)) {
         client.openWorkspace(workspace).then(track, reportRefusal);
       }
-    });
-  }, [client, transcripts.reconcile, track, reportRefusal]);
+      const visible = visibleRef.current;
+      if (visible) void load(visible.workspace, visible.id);
+      void catchUp();
+    };
+    client.sidecarState().then(onState, () => undefined);
+    return client.onSidecarState(onState);
+  }, [client, reconcile, load, catchUp, interruptAll, track, reportRefusal]);
 
   const switchProvider = useCallback(
     async (id: string) => {
@@ -402,6 +419,11 @@ function Shell({ prefs }: { prefs: Prefs }) {
         restricted={restricted}
         onReviewTrust={() => currentWorkspace && void startReview(currentWorkspace)}
       />
+      <CrashBanner
+        state={sidecar}
+        appName={appName}
+        onRestart={() => void client.restartSidecar().catch(() => undefined)}
+      />
       {notice && (
         <div
           role="alert"
@@ -441,6 +463,7 @@ function Shell({ prefs }: { prefs: Prefs }) {
               provider={session.provider}
               onPickProvider={switchProvider}
               keyMissing={key !== null && !key.present}
+              sidecarDown={sidecar.state === "crashed" || sidecar.state === "failed"}
               onSend={(text) => {
                 setHints(({ [session.id]: _gone, ...rest }) => rest);
                 return transcripts.send(session.workspace, session.id, text);

@@ -266,12 +266,12 @@ describe("the approval dialog", () => {
     );
     expect(within(screen.getByRole("dialog")).getByText("1 of 2")).toBeTruthy();
     client.pendingActionIds.mockResolvedValue(["a1"]);
-    await act(async () => client.pushState({ state: "ready" }));
+    await act(async () => client.pushState({ state: "ready", reopened: [] }));
     await act(async () => new Promise((r) => setTimeout(r, 20)));
     expect(dialog()).not.toBeNull();
     expect(within(screen.getByRole("dialog")).queryByText(/ of /)).toBeNull();
     client.pendingActionIds.mockResolvedValue([]);
-    await act(async () => client.pushState({ state: "ready" }));
+    await act(async () => client.pushState({ state: "ready", reopened: [] }));
     await act(async () => new Promise((r) => setTimeout(r, 20)));
     expect(dialog()).toBeNull();
   });

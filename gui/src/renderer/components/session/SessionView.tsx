@@ -30,6 +30,7 @@ export function SessionView({
   onSend,
   onStop,
   keyMissing,
+  sidecarDown,
   undo,
   hint,
 }: {
@@ -42,6 +43,8 @@ export function SessionView({
   onSend: (text: string) => Promise<void>;
   onStop: () => void;
   keyMissing: boolean;
+  /** The sidecar is restarting or stopped: nothing can be sent. */
+  sidecarDown: boolean;
   undo: UndoControls;
   /** A note under the transcript, e.g. after an undo. */
   hint: string | null;
@@ -127,6 +130,8 @@ export function SessionView({
           </p>
         )}
         <Composer
+          disabled={sidecarDown}
+          disabledReason="The sidecar is not running. Wait for it to restart."
           running={running}
           stopping={stopping}
           provider={provider}

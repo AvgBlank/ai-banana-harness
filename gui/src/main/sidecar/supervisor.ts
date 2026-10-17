@@ -2,6 +2,7 @@
 // It never restarts a deterministic failure and never re-sends or retries a request.
 import type { EventEmitter } from "node:events";
 import type { Readable, Writable } from "node:stream";
+import type { FailureReason, SidecarState } from "../../shared/api";
 import {
   type EventFrame,
   type MethodName,
@@ -37,22 +38,6 @@ export type Spawn = (
   args: string[],
   options: { env: Record<string, string> },
 ) => ChildLike;
-
-export type FailureReason =
-  | "no_ready"
-  | "incompatible_protocol"
-  | "fatal"
-  | "exited_early"
-  | "restart_budget";
-
-export type SidecarState =
-  | { state: "starting" }
-  | { state: "ready"; reopened: string[] }
-  | { state: "needs_key" }
-  | { state: "crashed"; attempt: number; restartInMs: number }
-  | { state: "failed"; reason: FailureReason; message: string }
-  | { state: "stopping" }
-  | { state: "stopped" };
 
 export interface SupervisorOptions {
   bin: string;
@@ -355,7 +340,8 @@ export class SidecarSupervisor {
     const now = Date.now();
     this.restarts = this.restarts.filter((at) => now - at < RESTART_WINDOW_MS);
     if (this.restarts.length >= RESTART_DELAYS_MS.length) {
-      this.fail("restart_budget", "the sidecar kept stopping; restart it to try again");
+      const tail = redact(run.stderr.toString("utf8"), run.apiKey);
+      this.fail("restart_budget", tail || "the sidecar kept stopping; restart it to try again");
       return;
     }
     const restartInMs = RESTART_DELAYS_MS[this.restarts.length] ?? 2_000;

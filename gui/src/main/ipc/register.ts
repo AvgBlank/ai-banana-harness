@@ -4,6 +4,7 @@ import { IpcError, ipcArgs, parseRpcCall } from "../../shared/ipc";
 import { PROTOCOL_VERSION } from "../../shared/protocol";
 import type { ExternalLinks } from "../external/links";
 import type { KeyResolver } from "../key/resolver";
+import type { LiveBuffers } from "../live/buffer";
 import type { Preferences } from "../prefs";
 import type { SidecarSupervisor } from "../sidecar/supervisor";
 import { WorkspaceTrust } from "../trust/flow";
@@ -23,6 +24,7 @@ export interface IpcDeps {
   supervisor: Pick<SidecarSupervisor, "request" | "restart" | "setOpenWorkspaces" | "state">;
   keys: Pick<KeyResolver, "status" | "resolve" | "setForSession">;
   known: KnownWorkspaces;
+  live: Pick<LiveBuffers, "attach" | "clear">;
   prefs: Pick<Preferences, "get" | "set" | "recordWorkspace">;
   trustStore: TrustStore;
   /** Reads the workspace config for hashing; main's own reader unless a test supplies one. */
@@ -118,6 +120,7 @@ export function registerIpc(deps: IpcDeps): void {
     guarded(trust, ipcArgs.workspacePath, async ({ path }) => {
       if (!opened.has(path)) throw new IpcError("unknown_workspace", "that workspace is not open");
       await supervisor.request("workspace.close", { workspace: path });
+      deps.live.clear(path);
       opened.delete(path);
       supervisor.setOpenWorkspaces([...opened]);
     }),
@@ -166,6 +169,19 @@ export function registerIpc(deps: IpcDeps): void {
   ipc.handle(
     channels.externalOpen,
     guarded(trust, ipcArgs.externalOpen, ({ url }) => links.open(url)),
+  );
+
+  ipc.handle(
+    channels.sidecarState,
+    guardedNoArgs(trust, () => supervisor.state),
+  );
+
+  // One synchronous step in main: the snapshot of buffered frames and the running turn's id.
+  ipc.handle(
+    channels.liveAttach,
+    guarded(trust, ipcArgs.liveAttach, ({ workspace, sessionId }) =>
+      deps.live.attach(workspace, sessionId),
+    ),
   );
 
   ipc.handle(

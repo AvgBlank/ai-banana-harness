@@ -3,9 +3,11 @@ import type {
   AppInfo,
   BananaApi,
   KeyStatus,
+  LiveAttach,
   OpenedWorkspace,
   Prefs,
   PrefsPatch,
+  SidecarState,
   TrustedWorkspace,
   TrustReview,
 } from "../shared/api";
@@ -48,7 +50,14 @@ const api: BananaApi = Object.freeze({
       invoke<unknown>(channels.rpcCall, { method, params }),
   }),
   external: Object.freeze({ open: (url: string) => invoke<void>(channels.externalOpen, { url }) }),
-  sidecar: Object.freeze({ restart: () => invoke<void>(channels.sidecarRestart) }),
+  sidecar: Object.freeze({
+    restart: () => invoke<void>(channels.sidecarRestart),
+    state: () => invoke<SidecarState>(channels.sidecarState),
+  }),
+  live: Object.freeze({
+    attach: (workspace: string, sessionId: string) =>
+      invoke<LiveAttach>(channels.liveAttach, { workspace, sessionId }),
+  }),
   on: (name: PushName, listener: (payload: unknown) => void) => {
     const channel = pushChannels[name];
     if (!channel) throw Object.freeze({ code: "unknown_event", message: "no such event" });

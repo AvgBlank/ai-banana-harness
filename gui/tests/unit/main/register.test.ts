@@ -4,9 +4,10 @@ import { describe, expect, test, vi } from "vitest";
 import { ExternalLinks } from "../../../src/main/external/links";
 import { KnownWorkspaces } from "../../../src/main/ipc/known";
 import { registerIpc } from "../../../src/main/ipc/register";
+import { LiveBuffers } from "../../../src/main/live/buffer";
 import { RpcError } from "../../../src/main/sidecar/client";
-import type { SidecarState } from "../../../src/main/sidecar/supervisor";
 import { TrustStore } from "../../../src/main/trust/store";
+import type { SidecarState } from "../../../src/shared/api";
 import { channels } from "../../../src/shared/channels";
 import { tempDir } from "./tmp";
 
@@ -58,6 +59,7 @@ function setup(options: { request?: (method: string, params: unknown) => unknown
   };
   const recorded: string[] = [];
   const known = new KnownWorkspaces();
+  const live = new LiveBuffers();
   const logs: string[] = [];
   const confirm = vi.fn(async () => ({ open: true, trustHost: false }));
   const open = vi.fn(async () => undefined);
@@ -68,6 +70,7 @@ function setup(options: { request?: (method: string, params: unknown) => unknown
     supervisor,
     keys,
     known,
+    live,
     links: new ExternalLinks({ confirm, open }),
     appInfo: { name: "App", version: "0.1.0", platform: "darwin" },
     trustStore: new TrustStore(join(tempDir("reg-"), "trust.json")),
@@ -90,6 +93,7 @@ function setup(options: { request?: (method: string, params: unknown) => unknown
     recorded,
     request,
     known,
+    live,
     logs,
     confirm,
     open,
@@ -310,6 +314,56 @@ describe("the API key", () => {
     const running = setup();
     await running.call(channels.keyRecheck);
     expect(running.supervisor.restart).not.toHaveBeenCalled();
+  });
+});
+
+describe("resilience channels", () => {
+  const created = (workspace: string, session: string, turn: string) => ({
+    kind: "event" as const,
+    workspace,
+    session_id: session,
+    turn_id: turn,
+    event: { id: `c-${turn}`, type: "turn.created", session_id: session, turn_id: turn },
+  });
+
+  test("live.attach returns the session's buffered frames and its running turn", async () => {
+    const t = setup();
+    t.live.push(created("/w", "s1", "T1") as never);
+    expect(await t.call(channels.liveAttach, { workspace: "/w", sessionId: "s1" })).toEqual({
+      ok: true,
+      value: { frames: [created("/w", "s1", "T1")], activeTurnId: "T1" },
+    });
+    expect(await t.call(channels.liveAttach, { workspace: "/w", sessionId: "other" })).toEqual({
+      ok: true,
+      value: { frames: [], activeTurnId: null },
+    });
+  });
+
+  test("live.attach takes exactly a workspace and a session id", async () => {
+    const t = setup();
+    for (const bad of [{}, { workspace: "/w" }, { workspace: "/w", sessionId: "s", extra: 1 }]) {
+      expect(await t.call(channels.liveAttach, bad)).toMatchObject({
+        ok: false,
+        error: { code: "invalid_arguments" },
+      });
+    }
+  });
+
+  test("closing a workspace empties its buffer", async () => {
+    const t = setup();
+    await t.call(channels.workspacePick);
+    await t.call(channels.workspaceOpen, { path: "/picked" });
+    t.live.push(created("/picked", "s1", "T1") as never);
+    await t.call(channels.workspaceClose, { path: "/picked" });
+    expect(t.live.attach("/picked", "s1").frames).toEqual([]);
+  });
+
+  test("sidecar.state reports the supervisor's state", async () => {
+    const t = setup();
+    expect(await t.call(channels.sidecarState)).toEqual({
+      ok: true,
+      value: { state: "ready", reopened: [] },
+    });
   });
 });
 

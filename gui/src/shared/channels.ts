@@ -17,6 +17,8 @@ export const channels = {
   rpcCall: "banana:rpc:call",
   externalOpen: "banana:external:open",
   sidecarRestart: "banana:sidecar:restart",
+  sidecarState: "banana:sidecar:get-state",
+  liveAttach: "banana:live:attach",
 } as const;
 
 /** Main to renderer, one channel each. */

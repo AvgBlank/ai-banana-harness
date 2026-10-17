@@ -1,4 +1,5 @@
 import type { PushName } from "./channels";
+import type { EventFrame } from "./protocol";
 
 export type Theme = "system" | "dark" | "light";
 
@@ -19,6 +20,31 @@ export interface Prefs {
 export type PrefsPatch = Partial<
   Pick<Prefs, "theme" | "sidebarOpen" | "changesOpen" | "changesScope" | "changesWidth">
 >;
+
+/** Automatic restarts the supervisor allows in a minute before it waits for the user. */
+export const MAX_RESTARTS = 3;
+
+export type FailureReason =
+  | "no_ready"
+  | "incompatible_protocol"
+  | "fatal"
+  | "exited_early"
+  | "restart_budget";
+
+/** Where the sidecar is: the supervisor's state, and what main tells the renderer. */
+export type SidecarState =
+  | { state: "starting" }
+  | { state: "ready"; reopened: string[] }
+  | { state: "needs_key" }
+  | { state: "crashed"; attempt: number; restartInMs: number }
+  | { state: "failed"; reason: FailureReason; message: string }
+  | { state: "stopping" }
+  | { state: "stopped" };
+
+export interface LiveAttach {
+  frames: EventFrame[];
+  activeTurnId: string | null;
+}
 
 export type KeySource = "env" | "login_shell" | "session" | "none";
 
@@ -129,7 +155,15 @@ export interface BananaApi {
   };
   readonly rpc: { call(method: string, params: Record<string, unknown>): Promise<unknown> };
   readonly external: { open(url: string): Promise<void> };
-  readonly sidecar: { restart(): Promise<void> };
+  readonly sidecar: {
+    restart(): Promise<void>;
+    /** Where the sidecar is now; later changes arrive as the `sidecarState` push. */
+    state(): Promise<SidecarState>;
+  };
+  readonly live: {
+    /** The buffered frames of the session's current or last turn, and its running turn id. */
+    attach(workspace: string, sessionId: string): Promise<LiveAttach>;
+  };
   /** Subscribes to a main-to-renderer push; returns the unsubscribe function. */
   on(name: PushName, listener: (payload: unknown) => void): () => void;
 }
@@ -143,5 +177,6 @@ export const bananaKeys = [
   "rpc",
   "external",
   "sidecar",
+  "live",
   "on",
 ] as const;

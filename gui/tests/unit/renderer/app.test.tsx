@@ -147,7 +147,7 @@ describe("the session list", () => {
     await shell(client);
     expect(screen.getAllByRole("img", { name: "Turn running" })).toHaveLength(1);
     expect(screen.queryByRole("img", { name: "Interrupted" })).toBeNull();
-    act(() => client.pushState({ state: "crashed" }));
+    act(() => client.pushState({ state: "crashed", attempt: 1, restartInMs: 500 }));
     expect(screen.queryByRole("img", { name: "Turn running" })).toBeNull();
     expect(screen.getAllByRole("img", { name: "Interrupted" })).toHaveLength(1);
   });
@@ -156,7 +156,7 @@ describe("the session list", () => {
     const client = fakeClient({ sessions: SESSIONS });
     await shell(client);
     const before = client.listSessions.mock.calls.length;
-    await act(async () => client.pushState({ state: "ready" }));
+    await act(async () => client.pushState({ state: "ready", reopened: [] }));
     expect(client.listSessions.mock.calls.length).toBe(before + 1);
   });
 

@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, expect, test, vi } from "vitest";
-import { ExternalLinks, parseExternalUrl } from "../../../src/main/external/links";
+import { authLinkOf, ExternalLinks, parseExternalUrl } from "../../../src/main/external/links";
+import type { EventFrame } from "../../../src/shared/protocol";
 
 describe("parseExternalUrl", () => {
   test("https anywhere and http on loopback are accepted", () => {
@@ -65,5 +66,36 @@ describe("ExternalLinks", () => {
     await links.open("https://other.example.org/");
     expect(ports.confirm).toHaveBeenCalledTimes(2);
     expect(ports.open).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("MCP login addresses", () => {
+  const frame = (event: Record<string, unknown>) =>
+    ({ kind: "event", workspace: "/w", session_id: "s", turn_id: "T", event }) as EventFrame;
+
+  test("only an mcp.auth_required event carries one", () => {
+    expect(
+      authLinkOf(
+        frame({
+          id: "e1",
+          type: "mcp.auth_required",
+          thread_id: "t",
+          server: "x",
+          url: "https://a.example/login",
+        }),
+      ),
+    ).toBe("https://a.example/login");
+    expect(authLinkOf(frame({ id: "e2", type: "turn.done", state: "done" }))).toBeNull();
+  });
+
+  test("it is validated and confirmed like any other link", async () => {
+    const confirm = vi.fn(async () => ({ open: true, trustHost: false }));
+    const open = vi.fn(async () => undefined);
+    const links = new ExternalLinks({ confirm, open });
+    await links.open("https://a.example/login");
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(open).toHaveBeenCalledWith("https://a.example/login");
+    await expect(links.open("file:///etc/passwd")).rejects.toMatchObject({ code: "invalid_url" });
+    expect(open).toHaveBeenCalledOnce();
   });
 });

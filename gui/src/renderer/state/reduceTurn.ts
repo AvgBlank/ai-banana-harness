@@ -462,34 +462,43 @@ export function clearPending(turn: TurnView): TurnView {
 }
 
 /** A stored turn (`TurnRecord`) rebuilt as a view. A turn that never finished is interrupted. */
-export function turnFromRecord(record: {
-  turn_id: string;
-  input: string;
-  state: string | null;
-  error: string | null;
-  events: CoreEvent[];
-}): TurnView {
+/** A turn whose process died: nothing more will arrive, and nothing is still waiting. */
+export function interruptTurn(turn: TurnView): TurnView {
+  return {
+    ...turn,
+    status: "interrupted",
+    // The action went with the process that was waiting on it.
+    pending: [],
+    items: interruptItems(turn.items),
+    threads: Object.fromEntries(
+      Object.entries(turn.threads).map(([id, t]) => [
+        id,
+        {
+          ...t,
+          status: t.status === "running" ? "interrupted" : t.status,
+          items: interruptItems(t.items),
+        },
+      ]),
+    ),
+  };
+}
+
+/** `liveTurnId` is the turn the sidecar is running right now: it is not interrupted. */
+export function turnFromRecord(
+  record: {
+    turn_id: string;
+    input: string;
+    state: string | null;
+    error: string | null;
+    events: CoreEvent[];
+  },
+  liveTurnId: string | null = null,
+): TurnView {
   let turn: TurnView = { ...optimisticTurn(record.input), turnId: record.turn_id };
   // Stored events are in write order, which is the order the live stream delivered them.
   for (const event of record.events) turn = reduceTurn(turn, event);
-  if (record.state === null && turn.status === "running") {
-    turn = {
-      ...turn,
-      status: "interrupted",
-      // The action went with the process that was waiting on it.
-      pending: [],
-      items: interruptItems(turn.items),
-      threads: Object.fromEntries(
-        Object.entries(turn.threads).map(([id, t]) => [
-          id,
-          {
-            ...t,
-            status: t.status === "running" ? "interrupted" : t.status,
-            items: interruptItems(t.items),
-          },
-        ]),
-      ),
-    };
+  if (record.state === null && turn.status === "running" && record.turn_id !== liveTurnId) {
+    turn = interruptTurn(turn);
   }
   return turn;
 }

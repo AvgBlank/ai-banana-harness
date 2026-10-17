@@ -2,7 +2,8 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { RpcError } from "../../../src/main/sidecar/client";
 import { sidecarEnv } from "../../../src/main/sidecar/env";
-import { type SidecarState, SidecarSupervisor } from "../../../src/main/sidecar/supervisor";
+import { RESTART_DELAYS_MS, SidecarSupervisor } from "../../../src/main/sidecar/supervisor";
+import { MAX_RESTARTS, type SidecarState } from "../../../src/shared/api";
 import { FakeChild } from "./fake-child";
 
 const KEY = "sk-test-0123456789abcdef";
@@ -126,6 +127,29 @@ describe("handshake", () => {
     expect(message).toContain("[REDACTED]");
     expect(message).not.toContain(KEY);
     expect(h.children).toHaveLength(1);
+  });
+
+  test("when the restart budget runs out the failure carries the last stderr tail, redacted", async () => {
+    const h = setup();
+    h.supervisor.start();
+    for (let i = 0; i < 4; i++) {
+      const child = h.children[i] as FakeChild;
+      child.ready();
+      await advance(0);
+      child.stderr.write(i === 3 ? `panic near ${KEY}` : "earlier output");
+      await advance(0);
+      child.exit(1);
+      await advance(2000);
+    }
+    expect(h.supervisor.state).toEqual({
+      state: "failed",
+      reason: "restart_budget",
+      message: "panic near [REDACTED]",
+    });
+  });
+
+  test("the automatic restarts match the number the banner shows", () => {
+    expect(RESTART_DELAYS_MS).toHaveLength(MAX_RESTARTS);
   });
 
   test("api_key_present false is needs_key, and the sidecar still answers requests", async () => {

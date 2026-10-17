@@ -2,13 +2,15 @@ import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { join } from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { pushChannels } from "../shared/channels";
-import { ExternalLinks } from "./external/links";
+import { authLinkOf, ExternalLinks } from "./external/links";
 import { KnownWorkspaces } from "./ipc/known";
 import { registerIpc } from "./ipc/register";
 import { probeLoginShell } from "./key/probe";
 import { KeyResolver } from "./key/resolver";
+import { LiveBuffers } from "./live/buffer";
 import { installAppProtocol, registerAppScheme } from "./origin";
 import { Preferences } from "./prefs";
+import { QuitGuard } from "./quit";
 import { SidecarSupervisor } from "./sidecar/supervisor";
 import { TrustStore } from "./trust/store";
 import { createWindow, denyPermissions, devServer } from "./window";
@@ -48,6 +50,7 @@ function main(): void {
   });
   const prefs = new Preferences(join(app.getPath("userData"), "preferences.json"));
   const known = new KnownWorkspaces();
+  const live = new LiveBuffers();
   const trustStore = new TrustStore(join(app.getPath("userData"), "trust.json"));
   const supervisor = createSupervisor(keys);
   let window: BrowserWindow | null = null;
@@ -57,7 +60,40 @@ function main(): void {
   };
   supervisor.onState((state) => toWindow(pushChannels.sidecarState, state));
   // Only frames that passed the schema reach this point.
-  supervisor.onEvent((frame) => toWindow(pushChannels.sidecarEvent, frame));
+  supervisor.onEvent((frame) => {
+    live.push(frame);
+    toWindow(pushChannels.sidecarEvent, frame);
+    // A remote MCP server's login address goes through the same confirmed path as any link.
+    const login = authLinkOf(frame);
+    if (login) void links.open(login).catch(() => undefined);
+  });
+  // A turn that died with the process leaves nothing to catch up on.
+  supervisor.onState((state) => {
+    if (state.state !== "ready" && state.state !== "starting" && state.state !== "needs_key") {
+      live.clear();
+    }
+  });
+
+  const links = new ExternalLinks({
+    confirm: async (url) => {
+      const options = {
+        type: "question" as const,
+        buttons: ["Open", "Cancel"],
+        defaultId: 1,
+        cancelId: 1,
+        message: "Open this link in your browser?",
+        detail: url.toString(),
+        checkboxLabel: `Do not ask again for ${url.host} until the app restarts`,
+      };
+      const answer = window
+        ? await dialog.showMessageBox(window, options)
+        : await dialog.showMessageBox(options);
+      return { open: answer.response === 0, trustHost: answer.checkboxChecked };
+    },
+    open: (url) => shell.openExternal(url),
+  });
+
+  const openExternal = (url: string) => links.open(url);
 
   app.whenReady().then(async () => {
     installAppProtocol(join(__dirname, "../renderer"));
@@ -71,27 +107,11 @@ function main(): void {
       },
       supervisor,
       known,
+      live,
       keys,
       prefs,
       trustStore,
-      links: new ExternalLinks({
-        confirm: async (url) => {
-          const options = {
-            type: "question" as const,
-            buttons: ["Open", "Cancel"],
-            defaultId: 1,
-            cancelId: 1,
-            message: "Open this link in your browser?",
-            detail: url.toString(),
-            checkboxLabel: `Do not ask again for ${url.host} until the app restarts`,
-          };
-          const answer = window
-            ? await dialog.showMessageBox(window, options)
-            : await dialog.showMessageBox(options);
-          return { open: answer.response === 0, trustHost: answer.checkboxChecked };
-        },
-        open: (url) => shell.openExternal(url),
-      }),
+      links,
       appInfo: { name: app.getName(), version: app.getVersion(), platform: process.platform },
       pickFolder: async () => {
         const options = { properties: ["openDirectory" as const] };
@@ -108,10 +128,10 @@ function main(): void {
     }
     // The key is found before the sidecar starts, so it starts with it.
     await keys.resolve();
-    window = createWindow();
+    window = createWindow(openExternal);
     supervisor.start();
     app.on("activate", () => {
-      if (BrowserWindow.getAllWindows().length === 0) window = createWindow();
+      if (BrowserWindow.getAllWindows().length === 0) window = createWindow(openExternal);
     });
   });
 
@@ -122,21 +142,27 @@ function main(): void {
     window.focus();
   });
 
-  // Quit stops the sidecar first; a second quit while that runs takes the kill path.
-  let stopping = false;
-  let stopped = false;
+  const quitGuard = new QuitGuard({
+    turnRunning: () => live.running,
+    confirm: async () => {
+      const options = {
+        type: "question" as const,
+        buttons: ["Quit", "Cancel"],
+        defaultId: 1,
+        cancelId: 1,
+        message: "A turn is running. Quit and cancel it?",
+        detail: "Files it already changed stay; you can undo from the session.",
+      };
+      const answer = window
+        ? await dialog.showMessageBox(window, options)
+        : await dialog.showMessageBox(options);
+      return answer.response === 0;
+    },
+    shutdown: (force) => supervisor.shutdown(force),
+    quit: () => app.quit(),
+  });
   app.on("before-quit", (event) => {
-    if (stopped) return;
-    event.preventDefault();
-    if (stopping) {
-      void supervisor.shutdown(true);
-      return;
-    }
-    stopping = true;
-    void supervisor.shutdown().finally(() => {
-      stopped = true;
-      app.quit();
-    });
+    if (!quitGuard.handle()) event.preventDefault();
   });
 
   app.on("window-all-closed", () => {

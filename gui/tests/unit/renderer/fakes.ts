@@ -1,10 +1,12 @@
 import { type Mocked, vi } from "vitest";
-import type { Client, SidecarStatus } from "../../../src/renderer/lib/client";
+import type { Client } from "../../../src/renderer/lib/client";
 import type { FileChange } from "../../../src/renderer/state/changes";
 import type {
   KeyStatus,
+  LiveAttach,
   Prefs,
   PrefsPatch,
+  SidecarState,
   TrustedWorkspace,
   TrustReview,
   TrustState,
@@ -76,7 +78,7 @@ export const PROVIDERS: ProviderOption[] = [
 ];
 
 export type FakeClient = Mocked<Client> & {
-  pushState(status: SidecarStatus): void;
+  pushState(status: SidecarState): void;
   /** Delivers a frame as main would forward it. */
   pushEvent(frame: EventFrame): void;
 };
@@ -102,6 +104,8 @@ export function fakeClient(
     picked?: string | null;
     key?: KeyStatus;
     foundOnRecheck?: KeyStatus;
+    /** What `live.attach` returns, by session id. */
+    live?: Record<string, LiveAttach>;
     turnFiles?: FileChange[];
     workspaceFiles?: FileChange[];
     /** The trust state `workspace.open` reports, by path (`none` otherwise). */
@@ -110,7 +114,7 @@ export function fakeClient(
     trusted?: TrustedWorkspace[];
   } = {},
 ): FakeClient {
-  const listeners = new Set<(status: SidecarStatus) => void>();
+  const listeners = new Set<(status: SidecarState) => void>();
   const created: Session[] = [];
   const eventListeners = new Set<(frame: EventFrame) => void>();
   const stored: Prefs = { ...DEFAULT_PREFS, ...options.prefs };
@@ -134,7 +138,19 @@ export function fakeClient(
       return key;
     }),
     listSessions: vi.fn(async () => [...created, ...(options.sessions ?? [])]),
-    runningSessions: vi.fn(async () => options.running ?? []),
+    activeTurns: vi.fn(async () =>
+      (options.running ?? []).map((sessionId) => ({
+        workspace: "/w",
+        sessionId,
+        turnId: `T-${sessionId}`,
+      })),
+    ),
+    attachLive: vi.fn(
+      async (_w: string, sessionId: string): Promise<LiveAttach> =>
+        options.live?.[sessionId] ?? { frames: [], activeTurnId: null },
+    ),
+    sidecarState: vi.fn(async (): Promise<SidecarState> => ({ state: "ready", reopened: [] })),
+    restartSidecar: vi.fn(async () => undefined),
     renameSession: vi.fn(async (_workspace: string, id: string, title: string) =>
       session({ id, workspace: "/w", title }),
     ),
@@ -154,7 +170,7 @@ export function fakeClient(
       workspace: path,
       trust: "needs_review" as const,
     })),
-    onSidecarState: vi.fn((listener: (status: SidecarStatus) => void) => {
+    onSidecarState: vi.fn((listener: (status: SidecarState) => void) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
     }),
@@ -198,7 +214,7 @@ export function fakeClient(
     pushEvent: (f: EventFrame) => {
       for (const listener of eventListeners) listener(f);
     },
-    pushState: (status: SidecarStatus) => {
+    pushState: (status: SidecarState) => {
       for (const listener of listeners) listener(status);
     },
   };

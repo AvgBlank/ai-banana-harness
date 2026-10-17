@@ -21,7 +21,8 @@ export function denyPermissions(): void {
   }
 }
 
-export function createWindow(): BrowserWindow {
+/** `openExternal` takes a link the page asked to open; it validates and confirms it itself. */
+export function createWindow(openExternal: (url: string) => Promise<void>): BrowserWindow {
   const window = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -50,7 +51,16 @@ export function createWindow(): BrowserWindow {
   window.once("ready-to-show", () => window.show());
 
   const { webContents } = window;
-  webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  // Never a new window; a link the page opens goes through the confirmed external-link path.
+  webContents.setWindowOpenHandler(({ url }) => {
+    void openExternal(url).catch(() => undefined);
+    return { action: "deny" };
+  });
+  // The sidecar is untouched by a renderer crash: reload, and the page catches up from main.
+  // ponytail: no limit on repeated crashes; cap the reloads per minute if one ever loops.
+  webContents.on("render-process-gone", (_event, details) => {
+    if (details.reason !== "clean-exit" && !window.isDestroyed()) webContents.reload();
+  });
   const guard = (event: { preventDefault(): void }, url: string) => {
     if (!isAllowedNavigation(url, devServer)) event.preventDefault();
   };
