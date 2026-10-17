@@ -4,9 +4,15 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+# A newer run on the same ref makes the older one pointless.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   check:
@@ -24,3 +30,68 @@ jobs:
       - run: make lint
       # Without AI_API_KEY, `make test` runs the offline suite and skips the live smoke.
       - run: make test
+
+  gui:
+    name: desktop app (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    # REQUIRE_GUI makes the Makefile run the GUI checks instead of skipping them; CI adds
+    # Chromium's --no-sandbox on Linux only. No secret is used: the fake provider needs none.
+    env:
+      REQUIRE_GUI: "1"
+      CI: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the toolchain pinned by rust-toolchain.toml
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      # The pnpm version comes from "packageManager" in gui/package.json.
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: gui/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: gui/.node-version
+          cache: pnpm
+          cache-dependency-path: gui/pnpm-lock.yaml
+      - name: Cache the Electron binary
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/Library/Caches/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('gui/pnpm-lock.yaml') }}
+      - name: Install Electron's runtime libraries and a virtual display
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libnss3 libgtk-3-0 libgbm1 libasound2t64 \
+            || sudo apt-get install -y xvfb libnss3 libgtk-3-0 libgbm1 libasound2
+      - run: make gui-setup
+      - run: make gui-lint
+      - run: make gui-test
+      # On Linux the Makefile wraps this in xvfb-run when there is no display.
+      - run: make gui-e2e
+      # The fixed test key must not be in anything that gets uploaded.
+      - name: Check the test results for the test key
+        id: leak
+        if: always()
+        run: |
+          if grep -rIF "sk-test-0123456789abcdef" gui/test-results 2>/dev/null; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "::error::the test key appears in gui/test-results"
+            exit 1
+          fi
+          echo "found=false" >> "$GITHUB_OUTPUT"
+      - name: Upload the failure artifacts
+        if: failure() && steps.leak.outputs.found != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gui-test-results-${{ matrix.os }}
+          path: gui/test-results
+          if-no-files-found: ignore
+          retention-days: 7
