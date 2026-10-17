@@ -1,0 +1,6 @@
+node_modules
+out
+dist
+build/sidecar
+test-results
+playwright-report
