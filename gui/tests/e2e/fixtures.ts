@@ -122,8 +122,15 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
       // Chromium's sandbox cannot start in some Linux CI containers; nowhere else.
       if (process.env.CI && process.platform === "linux") args.push("--no-sandbox");
       // `env` replaces the process environment: the isolated one from the fake provider, nothing else.
+      // Under xvfb-run the display needs its authority file too; both are plumbing, not secrets.
+      const display = Object.fromEntries(
+        ["DISPLAY", "XAUTHORITY"].flatMap((name) =>
+          process.env[name] ? [[name, process.env[name]]] : [],
+        ),
+      );
       const env: Record<string, string | undefined> = {
         ...stub.env,
+        ...display,
         BANANA_HARNESS_BIN: options.sidecar ?? required("BANANA_HARNESS_BIN"),
         ...options.env,
       };

@@ -12,7 +12,7 @@ SIDECAR_DEBUG := $(abspath $(TARGET_DIR)/debug/banana-harness)
 FAKE_PROVIDER_DEBUG := $(abspath $(TARGET_DIR)/debug/fake-provider)
 
 .PHONY: setup run test lint clean check-cc install-rust \
-        gui-setup gui-sidecar gui-dev gui-build gui-lint gui-test gui-e2e gui-clean gui-maybe-lint gui-maybe-test
+        gui-setup gui-sidecar gui-dev gui-build gui-lint gui-test gui-e2e gui-leak-scan gui-clean gui-maybe-lint gui-maybe-test
 
 setup: check-cc install-rust
 	$(CARGO) build --release --locked
@@ -85,6 +85,10 @@ gui-e2e: gui-sidecar
 	$(PNPM) --dir $(GUI) build
 	BANANA_HARNESS_BIN=$(SIDECAR_DEBUG) FAKE_PROVIDER_BIN=$(FAKE_PROVIDER_DEBUG) \
 	  $(if $(shell command -v xvfb-run),$(if $(DISPLAY),,xvfb-run -a),) $(PNPM) --dir $(GUI) test:e2e
+
+# Fails when the fixed test key is in the test results; run after gui-e2e, before uploading them.
+gui-leak-scan:
+	node $(GUI)/scripts/scan-test-results.mjs $(GUI)/test-results
 
 gui-clean:
 	rm -rf $(GUI)/out $(GUI)/dist $(GUI)/build/sidecar $(GUI)/test-results $(GUI)/playwright-report

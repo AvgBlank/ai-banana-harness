@@ -371,6 +371,9 @@ test("edit-and-undo: the panel shows the edit, Undo restores the file and marks 
   expect(existsSync(join(stub.workspace, "by-bash.txt"))).toBe(false);
   await expect(app.page.getByRole("button", { name: "Undo", exact: true })).toBeHidden();
 
+  // The panel's open state is kept across a reload, and below 1280 px an open panel hides the
+  // sidebar (the layout rule), so it is closed first: the next step needs the sidebar.
+  await panel.getByRole("button", { name: "Close changes" }).click();
   // After a reload the replayed event still marks the turn undone, with no Undo offered.
   await app.page.reload();
   await app.page

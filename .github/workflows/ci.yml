@@ -81,9 +81,8 @@ jobs:
         id: leak
         if: always()
         run: |
-          if grep -rIF "sk-test-0123456789abcdef" gui/test-results 2>/dev/null; then
+          if ! make gui-leak-scan; then
             echo "found=true" >> "$GITHUB_OUTPUT"
-            echo "::error::the test key appears in gui/test-results"
             exit 1
           fi
           echo "found=false" >> "$GITHUB_OUTPUT"

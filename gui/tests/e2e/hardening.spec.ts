@@ -64,10 +64,14 @@ test("the window is created with isolation, the sandbox and dev tools only unpac
       | { getLastWebPreferences(): Record<string, unknown> }
       | undefined;
     const prefs = contents?.getLastWebPreferences() ?? {};
-    // Dev tools are on exactly when the app is not packaged: ask for them and see.
+    // Dev tools are on exactly when the app is not packaged: ask for them and wait for the
+    // `devtools-opened` event, which takes longer than a fixed pause on a loaded macOS runner.
+    const opened = new Promise<boolean>((resolve) => {
+      window?.webContents.once("devtools-opened", () => resolve(true));
+      setTimeout(() => resolve(false), 10_000);
+    });
     window?.webContents.openDevTools({ mode: "detach" });
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    const devToolsOpened = window?.webContents.isDevToolsOpened() ?? false;
+    const devToolsOpened = (await opened) && (window?.webContents.isDevToolsOpened() ?? false);
     window?.webContents.closeDevTools();
     return {
       isolation: prefs.contextIsolation,
