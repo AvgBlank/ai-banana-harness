@@ -6,6 +6,16 @@ const gated = (text: string, gate: string) => ({ sse: { text }, gate, gate_after
 const release = (stub: Stub, gate: string) =>
   fetch(`${stub.stubs.baseline.control_url}/release/${gate}`, { method: "POST" });
 
+/** The model call reached the stub: the turn is running for real, not only on screen. */
+async function turnIsRunning(stub: Stub): Promise<void> {
+  await expect
+    .poll(
+      async () =>
+        (await (await fetch(`${stub.stubs.baseline.control_url}/requests`)).json()).length,
+    )
+    .toBeGreaterThan(0);
+}
+
 /** The sidecar is the one `serve --stdio` child of the app's main process. */
 function sidecarPid(app: Launched): number {
   const pid = app.app.process().pid as number;
@@ -77,6 +87,7 @@ test("a sidecar killed mid-turn: banner, interrupted turn, restart, nothing re-s
   await openFolder(app, stub);
   await sendPrompt(app.page, "answer slowly");
   await expect(app.page.getByRole("button", { name: "Stop" })).toBeVisible();
+  await turnIsRunning(stub);
 
   // The restart is quick: remember what the banner said rather than racing it.
   await app.page.evaluate(() => {
@@ -115,6 +126,7 @@ test("quit while a turn runs asks first; declining keeps it, confirming stops th
   await openFolder(app, stub);
   await sendPrompt(app.page, "answer slowly");
   await expect(app.page.getByRole("button", { name: "Stop" })).toBeVisible();
+  await turnIsRunning(stub);
   const sidecar = sidecarPid(app);
 
   const answer = (response: number) =>

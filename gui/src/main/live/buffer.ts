@@ -5,8 +5,8 @@ export const MAX_BUFFER_BYTES = 5 * 1024 * 1024;
 interface Entry {
   frames: Array<{ frame: EventFrame; bytes: number }>;
   bytes: number;
-  /** The turn that has begun and not yet ended, if any. */
-  active: { sessionId: string; turnId: string } | null;
+  /** The turn that has begun and not yet ended, if any; its id is unknown until `turn.created`. */
+  active: { sessionId: string; turnId: string | null } | null;
 }
 
 export interface Attached {
@@ -42,6 +42,16 @@ export class LiveBuffers {
     while (entry.bytes > MAX_BUFFER_BYTES && entry.frames.length > 1) {
       entry.bytes -= entry.frames.shift()?.bytes ?? 0;
     }
+  }
+
+  /**
+   * A `turn.start` was accepted: the turn counts as running before its first frame arrives, so a
+   * quit in that gap still asks.
+   */
+  started(workspace: string, sessionId: string): void {
+    const entry = this.entries.get(workspace) ?? { frames: [], bytes: 0, active: null };
+    entry.active = { sessionId, turnId: null };
+    this.entries.set(workspace, entry);
   }
 
   /** The buffered frames of one session and whether its turn is the running one, in one step. */

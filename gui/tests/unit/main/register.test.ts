@@ -358,6 +358,17 @@ describe("resilience channels", () => {
     expect(t.live.attach("/picked", "s1").frames).toEqual([]);
   });
 
+  test("an accepted turn.start marks the workspace running, a refused one does not", async () => {
+    const t = setup();
+    const params = { workspace: "/w", session_id: "s1", input: "go" };
+    await t.call(channels.rpcCall, { method: "turn.start", params });
+    expect(t.live.running).toBe(true);
+    t.live.clear();
+    t.request.mockRejectedValueOnce(new RpcError("turn_in_progress", "busy"));
+    await t.call(channels.rpcCall, { method: "turn.start", params });
+    expect(t.live.running).toBe(false);
+  });
+
   test("sidecar.state reports the supervisor's state", async () => {
     const t = setup();
     expect(await t.call(channels.sidecarState)).toEqual({

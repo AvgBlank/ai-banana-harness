@@ -24,7 +24,7 @@ export interface IpcDeps {
   supervisor: Pick<SidecarSupervisor, "request" | "restart" | "setOpenWorkspaces" | "state">;
   keys: Pick<KeyResolver, "status" | "resolve" | "setForSession">;
   known: KnownWorkspaces;
-  live: Pick<LiveBuffers, "attach" | "clear">;
+  live: Pick<LiveBuffers, "attach" | "clear" | "started">;
   prefs: Pick<Preferences, "get" | "set" | "recordWorkspace">;
   trustStore: TrustStore;
   /** Reads the workspace config for hashing; main's own reader unless a test supplies one. */
@@ -159,6 +159,8 @@ export function registerIpc(deps: IpcDeps): void {
     guarded(trust, ipcArgs.rpcCall, async (raw) => {
       const call = parseRpcCall(raw);
       const result = await supervisor.request(call.method, call.params as never);
+      if (call.method === "turn.start")
+        deps.live.started(call.params.workspace, call.params.session_id);
       if (call.method === "session.list") {
         known.learnFromSessions((result as { sessions: Array<{ workspace: string }> }).sessions);
       }

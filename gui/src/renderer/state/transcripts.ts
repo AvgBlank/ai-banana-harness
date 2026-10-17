@@ -83,7 +83,9 @@ export function transcriptReducer(state: TranscriptState, action: Action): Trans
       const live = (state.turns[action.sessionId] ?? []).filter(
         (t) => t.turnId === null || !stored.has(t.turnId),
       );
-      const keep = live.filter((t) => t.turnId === null || t.status === "running");
+      // An unbound turn that was interrupted before its first event may or may not exist; the
+      // stored copy is the truth, so only turns still running are kept.
+      const keep = live.filter((t) => t.status === "running");
       return {
         ...state,
         turns: { ...state.turns, [action.sessionId]: [...action.turns, ...keep] },

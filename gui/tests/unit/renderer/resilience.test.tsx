@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, test } from "vitest";
 import { App } from "@/App";
 import { CrashBanner } from "@/components/banners/CrashBanner";
 import { ClientProvider } from "@/state/client-context";
+import { optimisticTurn, turnFromRecord } from "@/state/reduceTurn";
+import { emptyTranscripts, transcriptReducer } from "@/state/transcripts";
 import { DEFAULT_PREFS, fakeClient, frame, session } from "./fakes";
 
 const WS = "/w";
@@ -144,6 +146,40 @@ describe("a crash", () => {
     );
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Restart" })));
     expect(client.restartSidecar).toHaveBeenCalled();
+  });
+});
+
+describe("a crash before the turn's first event", () => {
+  test("the unbound turn does not appear next to the stored one after the sidecar returns", () => {
+    // Sent, then the process died before turn.created: the turn is interrupted but has no id yet.
+    let state = transcriptReducer(emptyTranscripts, {
+      type: "sent",
+      workspace: WS,
+      sessionId: "s1",
+      input: "do it",
+    });
+    state = transcriptReducer(state, { type: "interrupt_all" });
+    expect(state.turns.s1?.map((t) => t.status)).toEqual(["interrupted"]);
+    const stored = turnFromRecord(record(null, [created]) as never);
+    state = transcriptReducer(state, {
+      type: "loaded",
+      sessionId: "s1",
+      turns: [stored],
+      active: null,
+    });
+    expect(state.turns.s1).toHaveLength(1);
+    expect(state.turns.s1?.[0]?.turnId).toBe("T1");
+  });
+
+  test("a turn that is still running and not stored yet is kept", () => {
+    let state = transcriptReducer(emptyTranscripts, {
+      type: "sent",
+      workspace: WS,
+      sessionId: "s1",
+      input: "do it",
+    });
+    state = transcriptReducer(state, { type: "loaded", sessionId: "s1", turns: [], active: null });
+    expect(state.turns.s1).toEqual([optimisticTurn("do it")]);
   });
 });
 
