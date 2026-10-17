@@ -15,10 +15,12 @@
     "build": "electron-vite build",
     "lint": "biome check . && tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit && node scripts/check-tokens.mjs && node scripts/check-versions.mjs",
     "test": "vitest run",
-    "tokens:check": "node scripts/check-tokens.mjs"
+    "tokens:check": "node scripts/check-tokens.mjs",
+    "test:e2e": "playwright test"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
+    "@playwright/test": "1.64.1",
     "@tailwindcss/vite": "4.3.3",
     "@testing-library/dom": "10.4.2",
     "@testing-library/react": "16.3.3",

@@ -7,10 +7,12 @@ CARGO ?= $(if $(wildcard $(HOME)/.cargo/bin/cargo),$(HOME)/.cargo/bin/cargo,carg
 BIN := target/release/banana-harness
 GUI := gui
 PNPM ?= pnpm
-SIDECAR_DEBUG := $(abspath target/debug/banana-harness)
+TARGET_DIR := $(or $(CARGO_TARGET_DIR),target)
+SIDECAR_DEBUG := $(abspath $(TARGET_DIR)/debug/banana-harness)
+FAKE_PROVIDER_DEBUG := $(abspath $(TARGET_DIR)/debug/fake-provider)
 
 .PHONY: setup run test lint clean check-cc install-rust \
-        gui-setup gui-sidecar gui-dev gui-build gui-lint gui-test gui-clean gui-maybe-lint gui-maybe-test
+        gui-setup gui-sidecar gui-dev gui-build gui-lint gui-test gui-e2e gui-clean gui-maybe-lint gui-maybe-test
 
 setup: check-cc install-rust
 	$(CARGO) build --release --locked
@@ -75,6 +77,14 @@ gui-lint:
 
 gui-test:
 	$(PNPM) --dir $(GUI) test
+
+# The end-to-end suite: Electron against the real sidecar and the fake provider. Not part of `make test`
+# (it needs the Electron binary and a display); Linux without a display uses xvfb-run.
+gui-e2e: gui-sidecar
+	$(CARGO) build --locked -p harness-testkit --bin fake-provider
+	$(PNPM) --dir $(GUI) build
+	BANANA_HARNESS_BIN=$(SIDECAR_DEBUG) FAKE_PROVIDER_BIN=$(FAKE_PROVIDER_DEBUG) \
+	  $(if $(shell command -v xvfb-run),$(if $(DISPLAY),,xvfb-run -a),) $(PNPM) --dir $(GUI) test:e2e
 
 gui-clean:
 	rm -rf $(GUI)/out $(GUI)/dist $(GUI)/build/sidecar $(GUI)/test-results $(GUI)/playwright-report

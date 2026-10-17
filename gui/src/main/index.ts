@@ -1,39 +1,17 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { join } from "node:path";
-import { app, BrowserWindow, session } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { pushChannels } from "../shared/channels";
+import { ExternalLinks } from "./external/links";
+import { KnownWorkspaces } from "./ipc/known";
+import { registerIpc } from "./ipc/register";
+import { installAppProtocol, registerAppScheme } from "./origin";
 import { sidecarEnv } from "./sidecar/env";
 import { SidecarSupervisor } from "./sidecar/supervisor";
+import { createWindow, denyPermissions, devServer } from "./window";
 
-// Set only by `electron-vite dev`; a packaged app has no dev server.
-const devServer = process.env.ELECTRON_RENDERER_URL;
-
-function createWindow(): void {
-  const window = new BrowserWindow({
-    width: 1440,
-    height: 900,
-    minWidth: 1100,
-    minHeight: 720,
-    // The title comes from the package metadata, not from the page.
-    title: app.getName(),
-    show: false,
-    webPreferences: {
-      preload: join(__dirname, "../preload/index.js"),
-      contextIsolation: true,
-      sandbox: true,
-      nodeIntegration: false,
-    },
-  });
-  window.on("page-title-updated", (event) => event.preventDefault());
-  window.once("ready-to-show", () => window.show());
-
-  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  window.webContents.on("will-navigate", (event, url) => {
-    if (!devServer || !url.startsWith(devServer)) event.preventDefault();
-  });
-
-  if (devServer) void window.loadURL(devServer);
-  else void window.loadFile(join(__dirname, "../renderer/index.html"));
-}
+// Privileges for the `app://` scheme must be registered before the app is ready.
+registerAppScheme();
 
 /** The bundled binary when packaged; in development `BANANA_HARNESS_BIN` or the debug build. */
 function sidecarBinary(): string {
@@ -42,7 +20,7 @@ function sidecarBinary(): string {
 }
 
 function createSupervisor(): SidecarSupervisor {
-  const supervisor = new SidecarSupervisor({
+  const supervisor: SidecarSupervisor = new SidecarSupervisor({
     bin: sidecarBinary(),
     spawn: (bin, args, options) =>
       spawn(bin, args, { env: options.env, stdio: "pipe" }) as ChildProcessWithoutNullStreams,
@@ -52,6 +30,10 @@ function createSupervisor(): SidecarSupervisor {
       variables: sidecarEnv(process.env, { apiKey: process.env.AI_API_KEY }),
       apiKey: process.env.AI_API_KEY,
     }),
+    // Restricted again; the trust flow re-evaluates trust before anything stronger.
+    reopenWorkspace: async (path) => {
+      await supervisor.request("workspace.open", { path, trust_workspace_config: false });
+    },
     log: (message) => console.info(`sidecar: ${message}`),
   });
   supervisor.onState((state) =>
@@ -62,22 +44,63 @@ function createSupervisor(): SidecarSupervisor {
 
 function main(): void {
   const supervisor = createSupervisor();
+  let window: BrowserWindow | null = null;
+
+  const toWindow = (channel: string, payload: unknown) => {
+    if (window && !window.isDestroyed()) window.webContents.send(channel, payload);
+  };
+  supervisor.onState((state) => toWindow(pushChannels.sidecarState, state));
+  // Only frames that passed the schema reach this point.
+  supervisor.onEvent((frame) => toWindow(pushChannels.sidecarEvent, frame));
 
   app.whenReady().then(() => {
-    session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) =>
-      callback(false),
-    );
-    session.defaultSession.setPermissionCheckHandler(() => false);
-    createWindow();
+    installAppProtocol(join(__dirname, "../renderer"));
+    denyPermissions();
+    registerIpc({
+      ipc: ipcMain,
+      trust: {
+        topFrame: () => window?.webContents.mainFrame ?? null,
+        devServer,
+        log: (message) => console.info(`ipc: ${message}`),
+      },
+      supervisor,
+      known: new KnownWorkspaces(),
+      links: new ExternalLinks({
+        confirm: async (url) => {
+          const options = {
+            type: "question" as const,
+            buttons: ["Open", "Cancel"],
+            defaultId: 1,
+            cancelId: 1,
+            message: "Open this link in your browser?",
+            detail: url.toString(),
+            checkboxLabel: `Do not ask again for ${url.host} until the app restarts`,
+          };
+          const answer = window
+            ? await dialog.showMessageBox(window, options)
+            : await dialog.showMessageBox(options);
+          return { open: answer.response === 0, trustHost: answer.checkboxChecked };
+        },
+        open: (url) => shell.openExternal(url),
+      }),
+      appInfo: { version: app.getVersion(), platform: process.platform },
+      pickFolder: async () => {
+        const options = { properties: ["openDirectory" as const] };
+        const result = window
+          ? await dialog.showOpenDialog(window, options)
+          : await dialog.showOpenDialog(options);
+        return result.canceled ? null : (result.filePaths[0] ?? null);
+      },
+    });
+    window = createWindow();
     supervisor.start();
     app.on("activate", () => {
-      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+      if (BrowserWindow.getAllWindows().length === 0) window = createWindow();
     });
   });
 
   // A second launch focuses the first window, so there is never a second sidecar.
   app.on("second-instance", () => {
-    const [window] = BrowserWindow.getAllWindows();
     if (!window) return;
     if (window.isMinimized()) window.restore();
     window.focus();

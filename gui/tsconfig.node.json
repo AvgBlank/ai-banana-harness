@@ -17,6 +17,7 @@
     "electron.vite.config.ts",
     "vitest.config.ts",
     "tests/unit/main",
-    "tests/unit/shared"
+    "tests/unit/shared",
+    "playwright.config.ts"
   ]
 }

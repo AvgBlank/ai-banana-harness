@@ -9,8 +9,10 @@
     "isolatedModules": true,
     "jsx": "react-jsx",
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
-    "types": ["vite/client"],
-    "paths": { "@/*": ["./src/renderer/*"] }
+    "types": ["vite/client", "node"],
+    "paths": {
+      "@/*": ["./src/renderer/*"]
+    }
   },
-  "include": ["src/renderer", "src/shared", "tests/unit/renderer"]
+  "include": ["src/renderer", "src/shared", "tests/unit/renderer", "tests/e2e"]
 }

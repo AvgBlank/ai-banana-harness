@@ -94,6 +94,7 @@ fifth ends the turn.
 ```
 make test    # offline suite (plus the live smoke when AI_API_KEY is set); also the desktop app's unit tests once `make gui-setup` has run
 make lint    # cargo fmt --check, and clippy with warnings denied; also the desktop app's checks once `make gui-setup` has run
+make gui-e2e # the desktop app's end-to-end suite against a fake provider (needs a display; CI uses xvfb on Linux)
 ```
 
 Tests live in each crate's `tests/` folder. `scripts/live_smoke.sh <deepseek|qwen>` runs the
