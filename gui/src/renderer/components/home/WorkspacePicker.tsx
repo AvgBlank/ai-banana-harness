@@ -6,10 +6,15 @@ import { useApp } from "@/state/store";
 
 export function WorkspacePicker({
   recent,
+  canOpen,
   onOpenFolder,
+  onOpenRecent,
 }: {
   recent: string[];
+  /** False while there is no API key: no workspace can be opened. */
+  canOpen: boolean;
   onOpenFolder: () => void;
+  onOpenRecent: (path: string) => Promise<void>;
 }) {
   const { state, set } = useApp();
   const current = state.workspace;
@@ -39,7 +44,11 @@ export function WorkspacePicker({
             <button
               type="button"
               key={path}
-              onClick={() => set({ workspace: path, workspaceMenuOpen: false })}
+              disabled={!canOpen}
+              onClick={() => {
+                set({ workspaceMenuOpen: false });
+                void onOpenRecent(path);
+              }}
               className={cn(
                 "flex w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-2 text-left hover:bg-s2",
                 path === current && "bg-s2",
@@ -56,11 +65,12 @@ export function WorkspacePicker({
           <div className="mt-1 border-t border-line pt-1">
             <button
               type="button"
+              disabled={!canOpen}
               onClick={() => {
                 set({ workspaceMenuOpen: false });
                 onOpenFolder();
               }}
-              className="flex w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-[14px] text-fg hover:bg-s2"
+              className="flex w-full cursor-pointer disabled:cursor-not-allowed disabled:opacity-45 items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-[14px] text-fg hover:bg-s2"
             >
               <FolderPlus size={16} className="text-muted" />
               Open folder…

@@ -33,7 +33,10 @@ test("the sidebar lists the sidecar's real sessions, grouped by workspace, and s
   const name = await page.evaluate(() => window.banana.app.info().then((info) => info.name));
   expect(name).toBe("Banana Harness");
   await expect(sidebar).toContainText(name);
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText("What should we work on?");
+  // Main remembers the workspace it opened, so the reload comes back to it.
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+    `What should we work on in ${folder}?`,
+  );
 });
 
 test("a theme chosen in settings is kept by main and applied on the next launch", async ({
@@ -49,7 +52,7 @@ test("a theme chosen in settings is kept by main and applied on the next launch"
   // Persisted by main, not by the page: ask main directly.
   await expect
     .poll(() => first.page.evaluate(() => window.banana.prefs.get()))
-    .toEqual({ theme: "light" });
+    .toMatchObject({ theme: "light" });
   await first.app.close();
 
   const second = await launch();

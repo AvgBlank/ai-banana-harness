@@ -17,6 +17,8 @@ export interface Stub {
 
 export interface Launched {
   app: ElectronApplication;
+  /** The directory Electron keeps this app's data in. */
+  userData: string;
   page: Page;
   /** Everything the main process wrote to stdout and stderr so far. */
   mainLog: () => string;
@@ -25,6 +27,8 @@ export interface Launched {
 export interface LaunchOptions {
   /** Run this executable instead of the real sidecar (main honours it only when unpackaged). */
   sidecar?: string;
+  /** Changes to the environment the app starts with; `undefined` removes a variable. */
+  env?: Record<string, string | undefined>;
 }
 
 function required(name: string): string {
@@ -108,10 +112,13 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
       // Chromium's sandbox cannot start in some Linux CI containers; nowhere else.
       if (process.env.CI && process.platform === "linux") args.push("--no-sandbox");
       // `env` replaces the process environment: the isolated one from the fake provider, nothing else.
-      const app = await _electron.launch({
-        args,
-        env: { ...stub.env, BANANA_HARNESS_BIN: options.sidecar ?? required("BANANA_HARNESS_BIN") },
-      });
+      const env: Record<string, string | undefined> = {
+        ...stub.env,
+        BANANA_HARNESS_BIN: options.sidecar ?? required("BANANA_HARNESS_BIN"),
+        ...options.env,
+      };
+      for (const name of Object.keys(env)) if (env[name] === undefined) delete env[name];
+      const app = await _electron.launch({ args, env: env as Record<string, string> });
       running.push(app);
       const child = app.process();
       for (const stream of [child.stdout, child.stderr]) {
@@ -121,7 +128,7 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
       }
       const page = await app.firstWindow();
       await page.waitForLoadState("domcontentloaded");
-      return { app, page, mainLog: () => log };
+      return { app, userData, page, mainLog: () => log };
     });
     // Failure artifacts under gui/test-results/<test>/: the main process log and a screenshot.
     if (testInfo.status !== testInfo.expectedStatus) {

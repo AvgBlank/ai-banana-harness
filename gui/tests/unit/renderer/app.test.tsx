@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { App } from "@/App";
 import { ClientProvider } from "@/state/client-context";
-import { type FakeClient, fakeClient, session } from "./fakes";
+import { DEFAULT_PREFS, type FakeClient, fakeClient, session } from "./fakes";
 
 const NOW = Date.parse("2026-10-17T12:00:00.000Z");
 const SESSIONS = [
@@ -47,7 +47,7 @@ async function shell(
 ) {
   const view = render(
     <ClientProvider client={client}>
-      <App theme={theme} />
+      <App prefs={{ ...DEFAULT_PREFS, theme }} />
     </ClientProvider>,
   );
   await screen.findByText("Fix flaky test");
@@ -119,7 +119,7 @@ describe("the session list", () => {
     vi.setSystemTime(NOW);
     render(
       <ClientProvider client={client}>
-        <App theme="dark" />
+        <App prefs={DEFAULT_PREFS} />
       </ClientProvider>,
     );
     await act(async () => {
@@ -136,7 +136,7 @@ describe("the session list", () => {
   test("says so when there are no sessions", async () => {
     render(
       <ClientProvider client={fakeClient()}>
-        <App theme="dark" />
+        <App prefs={DEFAULT_PREFS} />
       </ClientProvider>,
     );
     expect(await screen.findByText(/No sessions yet/)).toBeTruthy();

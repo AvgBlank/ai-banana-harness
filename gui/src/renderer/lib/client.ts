@@ -1,4 +1,11 @@
-import type { AppInfo, BananaApi, OpenedWorkspace, Prefs } from "../../shared/api";
+import type {
+  AppInfo,
+  BananaApi,
+  KeyStatus,
+  OpenedWorkspace,
+  Prefs,
+  PrefsPatch,
+} from "../../shared/api";
 import type { MethodName, Params, ProviderOption, Result, Session } from "../../shared/protocol";
 
 /** The sidecar state main pushes, as far as the shell reads it. */
@@ -11,7 +18,11 @@ export type SidecarStatus = { state: string };
 export interface Client {
   appInfo(): Promise<AppInfo>;
   prefs(): Promise<Prefs>;
-  setPrefs(patch: Partial<Prefs>): Promise<Prefs>;
+  setPrefs(patch: PrefsPatch): Promise<Prefs>;
+  keyStatus(): Promise<KeyStatus>;
+  recheckKey(): Promise<KeyStatus>;
+  /** Hands a typed key to main, which keeps it in memory and restarts the sidecar with it. */
+  setSessionKey(key: string): Promise<KeyStatus>;
   listSessions(): Promise<Session[]>;
   /** Session ids with a turn running now. */
   runningSessions(): Promise<string[]>;
@@ -29,6 +40,9 @@ export function clientFor(banana: BananaApi): Client {
     appInfo: () => banana.app.info(),
     prefs: () => banana.prefs.get(),
     setPrefs: (patch) => banana.prefs.set(patch),
+    keyStatus: () => banana.key.status(),
+    recheckKey: () => banana.key.recheck(),
+    setSessionKey: (key) => banana.key.setForSession(key),
     listSessions: async () => (await call("session.list", {})).sessions,
     runningSessions: async () =>
       (await call("workspace.list", {})).workspaces.flatMap((w) =>

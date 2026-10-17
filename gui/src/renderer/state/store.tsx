@@ -8,7 +8,7 @@ import {
   useReducer,
   useRef,
 } from "react";
-import type { Theme } from "../../shared/api";
+import type { Prefs, PrefsPatch, Theme } from "../../shared/api";
 import { useClient } from "./client-context";
 
 export type { Theme };
@@ -51,22 +51,44 @@ interface Ctx {
 
 const StateContext = createContext<Ctx | null>(null);
 
-export function StateProvider({ theme, children }: { theme: Theme; children: ReactNode }) {
+export function StateProvider({
+  prefs,
+  children,
+}: {
+  prefs: Pick<Prefs, "theme" | "sidebarOpen" | "changesOpen">;
+  children: ReactNode;
+}) {
   const client = useClient();
-  const [state, dispatch] = useReducer(reducer, { ...initialState, theme });
+  const [state, dispatch] = useReducer(reducer, {
+    ...initialState,
+    theme: prefs.theme,
+    sidebarOpen: prefs.sidebarOpen,
+    changesOpen: prefs.changesOpen,
+  });
   const set = useCallback((patch: Partial<UiState>) => dispatch(patch), []);
 
-  // Applied at once, and handed to main to persist; a failed save leaves the app on the choice.
   useEffect(() => {
     document.documentElement.dataset.theme = state.theme;
   }, [state.theme]);
-  const saved = useRef(theme);
-  const { theme: current } = state;
+  // What main last stored; a change to any of these is handed to main to persist. A failed
+  // save leaves the app on the choice.
+  const saved = useRef<PrefsPatch>({
+    theme: prefs.theme,
+    sidebarOpen: prefs.sidebarOpen,
+    changesOpen: prefs.changesOpen,
+  });
+  const { theme, sidebarOpen, changesOpen } = state;
   useEffect(() => {
-    if (current === saved.current) return;
-    saved.current = current;
-    void client.setPrefs({ theme: current }).catch(() => undefined);
-  }, [client, current]);
+    const now: PrefsPatch = { theme, sidebarOpen, changesOpen };
+    const changed = Object.fromEntries(
+      Object.entries(now).filter(
+        ([key, value]) => saved.current[key as keyof PrefsPatch] !== value,
+      ),
+    ) as PrefsPatch;
+    if (Object.keys(changed).length === 0) return;
+    saved.current = now;
+    void client.setPrefs(changed).catch(() => undefined);
+  }, [client, theme, sidebarOpen, changesOpen]);
 
   const value = useMemo(() => ({ state, set }), [state, set]);
   return <StateContext.Provider value={value}>{children}</StateContext.Provider>;

@@ -4,7 +4,16 @@ import { ExternalLinks } from "../../../src/main/external/links";
 import { KnownWorkspaces } from "../../../src/main/ipc/known";
 import { registerIpc } from "../../../src/main/ipc/register";
 import { RpcError } from "../../../src/main/sidecar/client";
+import type { SidecarState } from "../../../src/main/sidecar/supervisor";
 import { channels } from "../../../src/shared/channels";
+
+const basePrefs = {
+  theme: "dark" as const,
+  sidebarOpen: true,
+  changesOpen: false,
+  lastWorkspace: null,
+  recents: [] as string[],
+};
 
 type Handler = (
   event: { senderFrame: { url: string } | null },
@@ -30,6 +39,19 @@ function setup(options: { request?: (method: string, params: unknown) => unknown
     }
     return {};
   });
+  const supervisor = {
+    request: request as never,
+    restart: vi.fn(),
+    setOpenWorkspaces: vi.fn(),
+    state: { state: "ready", reopened: [] } as SidecarState,
+  };
+  const keyState = { present: true, source: "env" as const };
+  const keys = {
+    status: vi.fn(() => keyState),
+    resolve: vi.fn(async () => keyState),
+    setForSession: vi.fn(() => ({ present: true, source: "session" as const })),
+  };
+  const recorded: string[] = [];
   const known = new KnownWorkspaces();
   const logs: string[] = [];
   const confirm = vi.fn(async () => ({ open: true, trustHost: false }));
@@ -38,13 +60,18 @@ function setup(options: { request?: (method: string, params: unknown) => unknown
   registerIpc({
     ipc: { handle: (channel, listener) => handlers.set(channel, listener as Handler) },
     trust: { topFrame: () => topFrame, devServer: undefined, log: (m) => logs.push(m) },
-    supervisor: { request: request as never, restart: vi.fn(), setOpenWorkspaces: vi.fn() },
+    supervisor,
+    keys,
     known,
     links: new ExternalLinks({ confirm, open }),
     appInfo: { name: "App", version: "0.1.0", platform: "darwin" },
     prefs: {
-      get: async () => ({ theme: "dark" as const }),
-      set: async (patch) => ({ theme: "dark" as const, ...patch }),
+      get: async () => ({ ...basePrefs }),
+      set: async (patch) => ({ ...basePrefs, ...patch }),
+      recordWorkspace: async (workspace) => {
+        recorded.push(workspace);
+        return { ...basePrefs, lastWorkspace: workspace };
+      },
     },
     pickFolder: async () => picked,
   });
@@ -52,6 +79,9 @@ function setup(options: { request?: (method: string, params: unknown) => unknown
     (handlers.get(channel) as Handler)({ senderFrame: frame }, arg);
   return {
     call,
+    supervisor,
+    keys,
+    recorded,
     request,
     known,
     logs,
@@ -216,14 +246,97 @@ describe("external links", () => {
 describe("preferences", () => {
   test("get and set go through the store, and a patch is validated with unknown keys dropped", async () => {
     const t = setup();
-    expect(await t.call(channels.prefsGet)).toEqual({ ok: true, value: { theme: "dark" } });
-    expect(await t.call(channels.prefsSet, { theme: "light", evil: 1 })).toEqual({
+    expect(await t.call(channels.prefsGet)).toEqual({ ok: true, value: basePrefs });
+    expect(
+      await t.call(channels.prefsSet, { theme: "light", evil: 1, lastWorkspace: "/x" }),
+    ).toEqual({
       ok: true,
-      value: { theme: "light" },
+      value: { ...basePrefs, theme: "light" },
     });
     expect(await t.call(channels.prefsSet, { theme: "purple" })).toMatchObject({
       ok: false,
       error: { code: "invalid_arguments" },
     });
+    expect(await t.call(channels.prefsSet, { sidebarOpen: "yes" })).toMatchObject({
+      ok: false,
+      error: { code: "invalid_arguments" },
+    });
+  });
+});
+
+describe("the API key", () => {
+  test("status carries only presence and source", async () => {
+    const t = setup();
+    expect(await t.call(channels.keyStatus)).toEqual({
+      ok: true,
+      value: { present: true, source: "env" },
+    });
+  });
+
+  test("a typed key is stored by the resolver, the sidecar restarts, and the reply is the status alone", async () => {
+    const t = setup();
+    const reply = await t.call(channels.keySetForSession, { key: "  sk-test-0123456789abcdef  " });
+    expect(reply).toEqual({ ok: true, value: { present: true, source: "session" } });
+    expect(t.keys.setForSession).toHaveBeenCalledWith("sk-test-0123456789abcdef");
+    expect(t.supervisor.restart).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(reply)).not.toContain("sk-test");
+  });
+
+  test("empty, oversized and extra-key submissions are refused", async () => {
+    const t = setup();
+    for (const arg of [{ key: "   " }, { key: "k".repeat(513) }, { key: "k", extra: 1 }, {}]) {
+      expect(await t.call(channels.keySetForSession, arg)).toMatchObject({
+        ok: false,
+        error: { code: "invalid_arguments" },
+      });
+    }
+    expect(t.keys.setForSession).not.toHaveBeenCalled();
+    expect(t.supervisor.restart).not.toHaveBeenCalled();
+  });
+
+  test("check again restarts the sidecar only when it was waiting for a key and one is found", async () => {
+    const waiting = setup();
+    waiting.supervisor.state = { state: "needs_key" };
+    expect(await waiting.call(channels.keyRecheck)).toMatchObject({ ok: true });
+    expect(waiting.keys.resolve).toHaveBeenCalledWith(true);
+    expect(waiting.supervisor.restart).toHaveBeenCalledTimes(1);
+
+    const running = setup();
+    await running.call(channels.keyRecheck);
+    expect(running.supervisor.restart).not.toHaveBeenCalled();
+  });
+});
+
+describe("workspace lifecycle", () => {
+  test("opening records the workspace for the recents, and close works only for what is open", async () => {
+    const t = setup();
+    await t.call(channels.workspacePick);
+    await t.call(channels.workspaceOpen, { path: "/picked" });
+    expect(t.recorded).toEqual(["/picked"]);
+    expect(await t.call(channels.workspaceClose, { path: "/other" })).toMatchObject({
+      ok: false,
+      error: { code: "unknown_workspace" },
+    });
+    expect(await t.call(channels.workspaceClose, { path: "/picked" })).toEqual({ ok: true });
+    expect(t.request).toHaveBeenLastCalledWith("workspace.close", { workspace: "/picked" });
+    expect(t.supervisor.setOpenWorkspaces).toHaveBeenLastCalledWith([]);
+    expect(await t.call(channels.workspaceClose, { path: "/picked" })).toMatchObject({
+      ok: false,
+      error: { code: "unknown_workspace" },
+    });
+  });
+
+  test("a failed open records nothing", async () => {
+    const t = setup({
+      request: () => {
+        throw new RpcError("api_key_missing", "no key");
+      },
+    });
+    await t.call(channels.workspacePick);
+    expect(await t.call(channels.workspaceOpen, { path: "/picked" })).toMatchObject({
+      ok: false,
+      error: { code: "api_key_missing" },
+    });
+    expect(t.recorded).toEqual([]);
   });
 });

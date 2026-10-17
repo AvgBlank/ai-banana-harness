@@ -1,11 +1,26 @@
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { z } from "zod";
-import type { Prefs } from "../shared/api";
+import type { Prefs, PrefsPatch } from "../shared/api";
 
-const stored = z.object({ theme: z.enum(["system", "dark", "light"]).optional() });
+export const MAX_RECENTS = 10;
+const path = z.string().min(1).max(4096);
 
-export const DEFAULT_PREFS: Prefs = { theme: "dark" };
+const stored = z.object({
+  theme: z.enum(["system", "dark", "light"]).optional(),
+  sidebarOpen: z.boolean().optional(),
+  changesOpen: z.boolean().optional(),
+  lastWorkspace: path.nullable().optional(),
+  recents: z.array(path).optional(),
+});
+
+export const DEFAULT_PREFS: Prefs = {
+  theme: "dark",
+  sidebarOpen: true,
+  changesOpen: false,
+  lastWorkspace: null,
+  recents: [],
+};
 
 /** The user's preferences in one small JSON file. A missing or corrupt file means the defaults. */
 export class Preferences {
@@ -18,7 +33,7 @@ export class Preferences {
     let loaded: Prefs = { ...DEFAULT_PREFS };
     try {
       const parsed = stored.safeParse(JSON.parse(await readFile(this.file, "utf8")));
-      if (parsed.success) loaded = { ...loaded, ...definedOnly(parsed.data) };
+      if (parsed.success) loaded = normalise({ ...loaded, ...definedOnly(parsed.data) });
     } catch {
       // No file yet, or one that is not JSON: start from the defaults.
     }
@@ -26,20 +41,40 @@ export class Preferences {
     return loaded;
   }
 
-  async set(patch: Partial<Prefs>): Promise<Prefs> {
-    const next = { ...(await this.get()), ...definedOnly(patch) };
+  /** What the renderer may change: appearance and panel state. */
+  async set(patch: PrefsPatch): Promise<Prefs> {
+    const { theme, sidebarOpen, changesOpen } = patch;
+    return this.save({
+      ...(await this.get()),
+      ...definedOnly({ theme, sidebarOpen, changesOpen }),
+    });
+  }
+
+  /** Main notes a workspace it opened: the last one, and the newest of the recent ten. */
+  async recordWorkspace(workspace: string): Promise<Prefs> {
+    const now = await this.get();
+    const recents = [workspace, ...now.recents.filter((p) => p !== workspace)];
+    return this.save({ ...now, lastWorkspace: workspace, recents });
+  }
+
+  private async save(next: Prefs): Promise<Prefs> {
+    const value = normalise(next);
     // Written next to the target and renamed over it, so a crash leaves the old file intact.
     await mkdir(dirname(this.file), { recursive: true });
     const temp = `${this.file}.tmp`;
-    await writeFile(temp, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
+    await writeFile(temp, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
     await chmod(temp, 0o600);
     await rename(temp, this.file);
-    this.current = next;
-    return next;
+    this.current = value;
+    return value;
   }
 }
 
+function normalise(prefs: Prefs): Prefs {
+  return { ...prefs, recents: [...new Set(prefs.recents)].slice(0, MAX_RECENTS) };
+}
+
 /** Only the keys this version knows, and only those that are set. */
-function definedOnly(value: Partial<Prefs>): Partial<Prefs> {
-  return value.theme === undefined ? {} : { theme: value.theme };
+function definedOnly<T extends object>(value: T): Partial<T> {
+  return Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined)) as Partial<T>;
 }

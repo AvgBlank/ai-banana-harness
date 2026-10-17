@@ -1,5 +1,12 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AppInfo, BananaApi, OpenedWorkspace, Prefs } from "../shared/api";
+import type {
+  AppInfo,
+  BananaApi,
+  KeyStatus,
+  OpenedWorkspace,
+  Prefs,
+  PrefsPatch,
+} from "../shared/api";
 import { channels, type PushName, pushChannels } from "../shared/channels";
 
 type Envelope =
@@ -17,11 +24,17 @@ const api: BananaApi = Object.freeze({
   app: Object.freeze({ info: () => invoke<AppInfo>(channels.appInfo) }),
   prefs: Object.freeze({
     get: () => invoke<Prefs>(channels.prefsGet),
-    set: (patch: Partial<Prefs>) => invoke<Prefs>(channels.prefsSet, patch),
+    set: (patch: PrefsPatch) => invoke<Prefs>(channels.prefsSet, patch),
   }),
   workspace: Object.freeze({
     pick: () => invoke<string | null>(channels.workspacePick),
     open: (path: string) => invoke<OpenedWorkspace>(channels.workspaceOpen, { path }),
+    close: (path: string) => invoke<void>(channels.workspaceClose, { path }),
+  }),
+  key: Object.freeze({
+    status: () => invoke<KeyStatus>(channels.keyStatus),
+    recheck: () => invoke<KeyStatus>(channels.keyRecheck),
+    setForSession: (key: string) => invoke<KeyStatus>(channels.keySetForSession, { key }),
   }),
   rpc: Object.freeze({
     call: (method: string, params: Record<string, unknown>) =>

@@ -5,9 +5,10 @@ import { pushChannels } from "../shared/channels";
 import { ExternalLinks } from "./external/links";
 import { KnownWorkspaces } from "./ipc/known";
 import { registerIpc } from "./ipc/register";
+import { probeLoginShell } from "./key/probe";
+import { KeyResolver } from "./key/resolver";
 import { installAppProtocol, registerAppScheme } from "./origin";
 import { Preferences } from "./prefs";
-import { sidecarEnv } from "./sidecar/env";
 import { SidecarSupervisor } from "./sidecar/supervisor";
 import { createWindow, denyPermissions, devServer } from "./window";
 
@@ -20,17 +21,12 @@ function sidecarBinary(): string {
   return process.env.BANANA_HARNESS_BIN ?? join(app.getAppPath(), "../target/debug/banana-harness");
 }
 
-function createSupervisor(): SidecarSupervisor {
+function createSupervisor(keys: KeyResolver): SidecarSupervisor {
   const supervisor: SidecarSupervisor = new SidecarSupervisor({
     bin: sidecarBinary(),
     spawn: (bin, args, options) =>
       spawn(bin, args, { env: options.env, stdio: "pipe" }) as ChildProcessWithoutNullStreams,
-    // ponytail: the key comes from this process's environment only; the login-shell probe and
-    // the in-memory entry arrive with the key flow.
-    environment: () => ({
-      variables: sidecarEnv(process.env, { apiKey: process.env.AI_API_KEY }),
-      apiKey: process.env.AI_API_KEY,
-    }),
+    environment: () => keys.environment(),
     // Restricted again; the trust flow re-evaluates trust before anything stronger.
     reopenWorkspace: async (path) => {
       await supervisor.request("workspace.open", { path, trust_workspace_config: false });
@@ -44,7 +40,13 @@ function createSupervisor(): SidecarSupervisor {
 }
 
 function main(): void {
-  const supervisor = createSupervisor();
+  const keys = new KeyResolver({
+    env: process.env,
+    probe: () => probeLoginShell(process.env.SHELL),
+  });
+  const prefs = new Preferences(join(app.getPath("userData"), "preferences.json"));
+  const known = new KnownWorkspaces();
+  const supervisor = createSupervisor(keys);
   let window: BrowserWindow | null = null;
 
   const toWindow = (channel: string, payload: unknown) => {
@@ -54,7 +56,7 @@ function main(): void {
   // Only frames that passed the schema reach this point.
   supervisor.onEvent((frame) => toWindow(pushChannels.sidecarEvent, frame));
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     installAppProtocol(join(__dirname, "../renderer"));
     denyPermissions();
     registerIpc({
@@ -65,8 +67,9 @@ function main(): void {
         log: (message) => console.info(`ipc: ${message}`),
       },
       supervisor,
-      known: new KnownWorkspaces(),
-      prefs: new Preferences(join(app.getPath("userData"), "preferences.json")),
+      known,
+      keys,
+      prefs,
       links: new ExternalLinks({
         confirm: async (url) => {
           const options = {
@@ -94,6 +97,13 @@ function main(): void {
         return result.canceled ? null : (result.filePaths[0] ?? null);
       },
     });
+    // The workspaces main opened before are known again, so a recent one opens like a new pick.
+    const saved = await prefs.get();
+    for (const path of [...saved.recents, ...(saved.lastWorkspace ? [saved.lastWorkspace] : [])]) {
+      known.add(path);
+    }
+    // The key is found before the sidecar starts, so it starts with it.
+    await keys.resolve();
     window = createWindow();
     supervisor.start();
     app.on("activate", () => {

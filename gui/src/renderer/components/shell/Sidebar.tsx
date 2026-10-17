@@ -46,11 +46,13 @@ export function Sidebar({
   appName,
   data,
   now,
+  canOpen,
   onOpenFolder,
 }: {
   appName: string;
   data: SessionsData;
   now: number;
+  canOpen: boolean;
   onOpenFolder: () => void;
 }) {
   const { state, set } = useApp();
@@ -102,8 +104,9 @@ export function Sidebar({
           <button
             type="button"
             aria-label="Open folder"
+            disabled={!canOpen}
             onClick={onOpenFolder}
-            className="grid h-6 w-6 cursor-pointer place-items-center rounded-md hover:bg-s2 hover:text-fg"
+            className="grid h-6 w-6 cursor-pointer place-items-center rounded-md hover:bg-s2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-45"
           >
             <FolderPlus size={15} />
           </button>

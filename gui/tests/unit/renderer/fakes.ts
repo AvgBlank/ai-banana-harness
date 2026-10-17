@@ -1,6 +1,6 @@
 import { type Mocked, vi } from "vitest";
 import type { Client, SidecarStatus } from "../../../src/renderer/lib/client";
-import type { Prefs } from "../../../src/shared/api";
+import type { KeyStatus, Prefs, PrefsPatch } from "../../../src/shared/api";
 import type { ProviderOption, Session } from "../../../src/shared/protocol";
 
 export function session(over: Partial<Session> & Pick<Session, "id" | "workspace">): Session {
@@ -14,6 +14,14 @@ export function session(over: Partial<Session> & Pick<Session, "id" | "workspace
   };
 }
 
+export const DEFAULT_PREFS: Prefs = {
+  theme: "dark",
+  sidebarOpen: true,
+  changesOpen: false,
+  lastWorkspace: null,
+  recents: [],
+};
+
 export const PROVIDERS: ProviderOption[] = [
   { provider: "deepseek", model: "deepseek-flash", host: "api.deepseek.com", scheme: "https" },
   { provider: "qwen", model: "qwen3.8-flash", host: "dashscope.aliyuncs.com", scheme: "https" },
@@ -23,10 +31,18 @@ export type FakeClient = Mocked<Client> & { pushState(status: SidecarStatus): vo
 
 /** An in-memory stand-in for the preload API; every method is a spy. */
 export function fakeClient(
-  options: { sessions?: Session[]; running?: string[]; prefs?: Prefs; picked?: string | null } = {},
+  options: {
+    sessions?: Session[];
+    running?: string[];
+    prefs?: Prefs;
+    picked?: string | null;
+    key?: KeyStatus;
+    foundOnRecheck?: KeyStatus;
+  } = {},
 ): FakeClient {
   const listeners = new Set<(status: SidecarStatus) => void>();
-  const stored: Prefs = options.prefs ?? { theme: "dark" };
+  const stored: Prefs = { ...DEFAULT_PREFS, ...options.prefs };
+  let key: KeyStatus = options.key ?? { present: true, source: "env" };
   const client = {
     appInfo: vi.fn(async () => ({
       name: "Test App",
@@ -35,7 +51,16 @@ export function fakeClient(
       protocol: 1,
     })),
     prefs: vi.fn(async () => stored),
-    setPrefs: vi.fn(async (patch: Partial<Prefs>) => Object.assign(stored, patch)),
+    setPrefs: vi.fn(async (patch: PrefsPatch) => Object.assign(stored, patch)),
+    keyStatus: vi.fn(async () => key),
+    recheckKey: vi.fn(async () => {
+      key = options.foundOnRecheck ?? key;
+      return key;
+    }),
+    setSessionKey: vi.fn(async (_typed: string) => {
+      key = { present: true, source: "session" };
+      return key;
+    }),
     listSessions: vi.fn(async () => options.sessions ?? []),
     runningSessions: vi.fn(async () => options.running ?? []),
     renameSession: vi.fn(async (_workspace: string, id: string, title: string) =>

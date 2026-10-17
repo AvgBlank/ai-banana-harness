@@ -1,8 +1,9 @@
 // @vitest-environment node
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+
+import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test, vi } from "vitest";
+import { tempDir } from "./tmp";
 
 vi.mock("electron", () => ({ net: {}, protocol: {} }));
 
@@ -10,11 +11,11 @@ const { CONTENT_SECURITY_POLICY, devContentSecurityPolicy, isAllowedNavigation, 
   await import("../../../src/main/origin");
 
 describe("resolveAppPath", () => {
-  const root = mkdtempSync(join(tmpdir(), "bh-origin-"));
+  const root = tempDir("bh-origin-");
   mkdirSync(join(root, "assets"));
   writeFileSync(join(root, "index.html"), "x");
   writeFileSync(join(root, "assets", "a.js"), "x");
-  const outside = mkdtempSync(join(tmpdir(), "bh-outside-"));
+  const outside = tempDir("bh-outside-");
   writeFileSync(join(outside, "secret.txt"), "x");
   symlinkSync(outside, join(root, "link"));
   const real = (name: string) => join(root, name);

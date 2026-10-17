@@ -1,3 +1,4 @@
+import { KeyOnboarding } from "@/components/dialogs/KeyOnboarding";
 import { Composer } from "@/components/home/Composer";
 import { WorkspacePicker } from "@/components/home/WorkspacePicker";
 import { BananaMark } from "@/components/ui/banana-mark";
@@ -12,14 +13,26 @@ const SUGGESTIONS = [
 
 export function HomeScreen({
   recent,
+  canOpen,
+  needsKey,
+  appName,
+  onRecheckKey,
+  onUseKey,
   provider,
   onPickProvider,
   onOpenFolder,
+  onOpenRecent,
 }: {
   recent: string[];
+  canOpen: boolean;
+  needsKey: boolean;
+  appName: string;
+  onRecheckKey: () => Promise<void>;
+  onUseKey: (key: string) => Promise<void>;
   provider: string | null;
   onPickProvider: (id: string) => void;
   onOpenFolder: () => void;
+  onOpenRecent: (path: string) => Promise<void>;
 }) {
   const { state, set } = useApp();
   return (
@@ -43,28 +56,45 @@ export function HomeScreen({
         </p>
       </div>
 
+      {needsKey && (
+        <div className="mb-5">
+          <KeyOnboarding appName={appName} onRecheck={onRecheckKey} onUseKey={onUseKey} />
+        </div>
+      )}
+
       <div>
-        <WorkspacePicker recent={recent} onOpenFolder={onOpenFolder} />
+        <WorkspacePicker
+          recent={recent}
+          canOpen={canOpen}
+          onOpenFolder={onOpenFolder}
+          onOpenRecent={onOpenRecent}
+        />
         <Composer
           disabled
-          disabledReason="Starting a session is not available yet."
+          disabledReason={
+            needsKey
+              ? "Add an API key to start a session."
+              : "Starting a session is not available yet."
+          }
           provider={provider}
           onPickProvider={onPickProvider}
         />
       </div>
 
-      <div className="mt-5 flex flex-wrap justify-center gap-2">
-        {SUGGESTIONS.map((s) => (
-          <button
-            type="button"
-            key={s}
-            onClick={() => set({ draft: s })}
-            className="cursor-pointer rounded-full border border-line px-3.5 py-1.5 text-[13px] text-muted transition-colors hover:border-line-strong hover:bg-s1 hover:text-fg"
-          >
-            {s}
-          </button>
-        ))}
-      </div>
+      {!needsKey && (
+        <div className="mt-5 flex flex-wrap justify-center gap-2">
+          {SUGGESTIONS.map((s) => (
+            <button
+              type="button"
+              key={s}
+              onClick={() => set({ draft: s })}
+              className="cursor-pointer rounded-full border border-line px-3.5 py-1.5 text-[13px] text-muted transition-colors hover:border-line-strong hover:bg-s1 hover:text-fg"
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
