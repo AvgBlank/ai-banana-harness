@@ -1,0 +1,49 @@
+{
+  "name": "edit-and-undo",
+  "workspace": "hello-repo",
+  "replies": [
+    {
+      "sse": {
+        "tool_calls": [
+          {
+            "id": "call_1",
+            "name": "edit",
+            "arguments": {
+              "path": "hello.txt",
+              "old_string": "hello world",
+              "new_string": "goodbye world"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "sse": {
+        "text": "Edited hello.txt."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "send": "change the greeting"
+    },
+    {
+      "approve": "allow"
+    },
+    {
+      "wait_for": "turn.done"
+    },
+    {
+      "undo": true
+    }
+  ],
+  "expect": {
+    "requests": 2,
+    "files": {
+      "hello.txt": "hello world\n"
+    },
+    "ui": [
+      "Edited hello.txt."
+    ]
+  }
+}

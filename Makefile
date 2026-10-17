@@ -15,8 +15,12 @@ run:
 	@test -x $(BIN) || { echo "error: $(BIN) not found; run 'make setup' first." >&2; exit 1; }
 	@$(BIN)
 
+# Loopback must bypass any proxy from the environment: the offline suite talks to a fake provider
+# on 127.0.0.1. The user's own exclusions are kept.
+TEST_ENV = NO_PROXY="$${NO_PROXY:+$$NO_PROXY,}127.0.0.1,localhost" no_proxy="$${no_proxy:+$$no_proxy,}127.0.0.1,localhost"
+
 test:
-	$(CARGO) test --workspace --locked
+	$(TEST_ENV) $(CARGO) test --workspace --locked
 	@# One key belongs to one provider: the other one's 401 is a skip, not a failure.
 	@if [ -z "$$AI_API_KEY" ]; then echo "AI_API_KEY not set; skipping the live smoke test."; exit 0; fi; \
 	passed=0; \

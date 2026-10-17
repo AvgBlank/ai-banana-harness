@@ -7,7 +7,7 @@ pub mod theme;
 pub mod ui;
 
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
@@ -26,14 +26,15 @@ use crossterm::terminal::{
 };
 use futures_util::StreamExt;
 use harness_core::{
-    Answer, Config, Event as HarnessEvent, EventKind, Harness, HarnessOptions,
+    Answer, Config, Event as HarnessEvent, EventKind, FileChange, Harness, HarnessOptions,
     LAST_PROVIDER_SETTING, Provider, Store, TurnHandle, api_key_from_env, default_db_path,
+    last_provider,
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use tokio::time::interval;
 
-use crate::app::{App, FileChange, MainState, SCROLL_STEP, Screen, WHEEL_SCROLL_STEP};
+use crate::app::{App, MainState, SCROLL_STEP, Screen, WHEEL_SCROLL_STEP};
 
 const FRAME_INTERVAL: Duration = Duration::from_millis(33);
 
@@ -45,8 +46,7 @@ pub async fn run() -> Result<()> {
     let mut store = Some(Store::open(&default_db_path()?).context("opening the database")?);
     let last_provider = store
         .as_ref()
-        .and_then(|s| s.get_setting(LAST_PROVIDER_SETTING).ok().flatten())
-        .and_then(|value| value.parse().ok())
+        .and_then(last_provider)
         .unwrap_or(Provider::DeepSeek);
     let env_workspace = std::env::var_os("WORKSPACE").map(PathBuf::from);
     let key_missing = api_key_from_env().is_err();
@@ -81,8 +81,10 @@ pub async fn run() -> Result<()> {
                 let done = matches!(event.kind, EventKind::TurnDone { .. });
                 if let Some(main) = app.main_mut() {
                     // Before `turn.done` is applied, so its summary card counts the final state.
-                    if done || matches!(event.kind, EventKind::ToolResponse { .. }) {
-                        main.modified_files = workspace_changes(&main.workspace);
+                    if (done || matches!(event.kind, EventKind::ToolResponse { .. }))
+                        && let Some(h) = harness.as_ref()
+                    {
+                        main.modified_files = changed_files(h);
                     }
                     main.apply_event(event);
                     // A turn is what connects MCP servers, so its events are when state changes.
@@ -215,9 +217,9 @@ fn handle_terminal_event(
             }
             Action::Undo => {
                 if let Some(h) = harness.as_ref() {
-                    let outcome = h.undo(session_id)?;
+                    let outcome = h.undo(session_id)?.outcome;
                     if let Some(main) = app.main_mut() {
-                        main.modified_files = workspace_changes(&main.workspace);
+                        main.modified_files = changed_files(h);
                         main.confirm_undo(outcome);
                     }
                 }
@@ -275,7 +277,7 @@ fn handle_terminal_event(
                         app.enter_main(provider, path);
                         if let Some(main) = app.main_mut() {
                             main.config = Some(config);
-                            main.modified_files = workspace_changes(&main.workspace);
+                            main.modified_files = changed_files(&opened);
                             main.mcp = opened.mcp_status();
                             main.context_limit = Some(opened.compaction_threshold(provider));
                         }
@@ -625,45 +627,13 @@ fn edit_in_editor(terminal: &mut TerminalGuard, text: &str) -> Result<String> {
     result
 }
 
-/// The workspace's uncommitted changes against `HEAD`, plus untracked files, for display only.
-/// Empty when the workspace isn't a git repository or git isn't installed.
-// ponytail: runs git synchronously on the UI thread; move to spawn_blocking if it ever lags.
-pub fn workspace_changes(workspace: &Path) -> Vec<FileChange> {
-    let mut changes: Vec<FileChange> = git(workspace, &["diff", "--numstat", "HEAD"])
-        .lines()
-        .filter_map(|line| {
-            let mut fields = line.splitn(3, '\t');
-            let added = fields.next()?;
-            let removed = fields.next()?;
-            Some(FileChange {
-                path: fields.next()?.to_string(),
-                // Binary files report `-`.
-                added: added.parse().unwrap_or(0),
-                removed: removed.parse().unwrap_or(0),
-            })
-        })
-        .collect();
-    for path in git(workspace, &["ls-files", "--others", "--exclude-standard"]).lines() {
-        let added = std::fs::read_to_string(workspace.join(path))
-            .map_or(0, |text| text.lines().count() as u64);
-        changes.push(FileChange {
-            path: path.to_string(),
-            added,
-            removed: 0,
-        });
-    }
-    changes
-}
-
-fn git(workspace: &Path, args: &[&str]) -> String {
-    Command::new("git")
-        .arg("-C")
-        .arg(workspace)
-        .args(args)
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+/// The sidebar's changed-file list; no git, or an error from it, shows as an empty list.
+// ponytail: runs git on the UI thread, and builds each file's patch though the sidebar only
+// shows counts; move to spawn_blocking, or a counts-only call, if it ever lags.
+fn changed_files(harness: &Harness) -> Vec<FileChange> {
+    harness
+        .workspace_changes()
+        .map(|changes| changes.files)
         .unwrap_or_default()
 }
 

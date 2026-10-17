@@ -1,12 +1,13 @@
 //! A git snapshot of the workspace, taken before a turn's first mutating tool call, so `/undo`
-//! can restore it. Shells out to `git`, the same approach `harness-tui::workspace_changes` uses
-//! for its (display-only) diff.
+//! can restore it. Shells out to `git`; this module owns that plumbing, and `changes` shares it
+//! to diff the workspace and to diff a turn against its snapshot.
 
 use std::collections::HashSet;
+use std::io::Read;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 
 /// A turn's pre-mutation snapshot: the tracked-file state (as a stash-style commit, anchored so
 /// it survives garbage collection) plus which paths were untracked at the time.
@@ -74,12 +75,12 @@ fn checkpoint_ref(turn_id: &str) -> String {
 
 /// Runs `git` in `workspace` and returns trimmed stdout, or `None` on a non-zero exit (not a git
 /// repo, no commits yet, `git` missing, ...).
-fn git(workspace: &Path, args: &[&str]) -> Option<String> {
+pub(crate) fn git(workspace: &Path, args: &[&str]) -> Option<String> {
     let output = run(workspace, args).ok()?;
     Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-fn run(workspace: &Path, args: &[&str]) -> Result<std::process::Output> {
+pub(crate) fn run(workspace: &Path, args: &[&str]) -> Result<std::process::Output> {
     let output = Command::new("git")
         .arg("-C")
         .arg(workspace)
@@ -93,4 +94,47 @@ fn run(workspace: &Path, args: &[&str]) -> Result<std::process::Output> {
         );
     }
     Ok(output)
+}
+
+/// Like [`run`], but reads at most `limit` bytes of stdout, for output that can be huge (a diff
+/// of a generated file). Past the limit the process is killed instead of read to the end, so the
+/// cost is `limit` bytes of memory, not the output's size; the flag says whether it was cut. An
+/// exit code outside `ok_codes` is an error unless the output was cut (`git diff --no-index`
+/// exits 1 when the files differ). Stderr is discarded, so an error names only the exit code.
+pub(crate) fn run_limited(
+    workspace: &Path,
+    args: &[&str],
+    limit: usize,
+    ok_codes: &[i32],
+) -> Result<(Vec<u8>, bool)> {
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(workspace)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .with_context(|| format!("running git {args:?}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow!("git {args:?} has no stdout"))?;
+    let mut out = Vec::new();
+    stdout
+        .take(limit as u64 + 1)
+        .read_to_end(&mut out)
+        .with_context(|| format!("reading git {args:?}"))?;
+    let cut = out.len() > limit;
+    if cut {
+        out.truncate(limit);
+        let _ = child.kill();
+    }
+    let status = child
+        .wait()
+        .with_context(|| format!("waiting for git {args:?}"))?;
+    if !cut && !status.code().is_some_and(|code| ok_codes.contains(&code)) {
+        bail!("git {args:?} failed: {status}");
+    }
+    Ok((out, cut))
 }

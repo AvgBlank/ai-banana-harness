@@ -1,0 +1,21 @@
+[package]
+name = "harness-testkit"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+
+[[bin]]
+name = "fake-provider"
+path = "src/bin/fake-provider.rs"
+
+[lints]
+workspace = true

@@ -4,8 +4,9 @@ mod common;
 
 use std::time::Duration;
 
-use common::{TestHarness, sse_text, sse_tool_calls};
+use common::TestHarness;
 use harness_core::{Event, EventKind, Provider, TurnState};
+use harness_testkit::{sse_text, sse_tool_calls};
 use serde_json::Value;
 
 /// Slow enough that overlapping child requests are observable at the fake provider.
@@ -305,7 +306,7 @@ async fn a_failing_child_becomes_an_error_result_and_the_parent_continues() {
     )]));
     t.provider.push_sse_matching(
         "Task delta",
-        common::fixture("deepseek_length.sse"),
+        harness_testkit::fixture("deepseek_length.sse"),
         Duration::ZERO,
     );
     t.provider.push_sse(sse_text("the subagent failed"));

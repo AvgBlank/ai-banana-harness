@@ -4,8 +4,9 @@ mod common;
 
 use std::time::{Duration, Instant};
 
-use common::{TEST_API_KEY, TestHarness, fixture};
+use common::TestHarness;
 use harness_core::{Answer, Event, EventKind, Provider, TurnState};
+use harness_testkit::{TEST_API_KEY, fixture};
 use serde_json::{Value, json};
 
 /// One DeepSeek tool-call reply asking for `name(arguments)`.

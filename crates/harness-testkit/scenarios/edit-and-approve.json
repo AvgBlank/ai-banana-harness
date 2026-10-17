@@ -1,0 +1,67 @@
+{
+  "name": "edit-and-approve",
+  "workspace": "hello-repo",
+  "replies": [
+    {
+      "sse": {
+        "tool_calls": [
+          {
+            "id": "call_1",
+            "name": "write_file",
+            "arguments": {
+              "path": "NOTES.md",
+              "content": "hi\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "sse": {
+        "tool_calls": [
+          {
+            "id": "call_2",
+            "name": "bash",
+            "arguments": {
+              "command": "git push origin main"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "sse": {
+        "text": "Done. I wrote NOTES.md."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "send": "write a note and push it"
+    },
+    {
+      "approve": "allow"
+    },
+    {
+      "approve": "deny"
+    },
+    {
+      "wait_for": "turn.done"
+    }
+  ],
+  "expect": {
+    "requests": 3,
+    "request_contains": [
+      {
+        "index": 2,
+        "text": "NOTES.md"
+      }
+    ],
+    "files": {
+      "NOTES.md": "hi\n"
+    },
+    "ui": [
+      "I wrote NOTES.md."
+    ]
+  }
+}

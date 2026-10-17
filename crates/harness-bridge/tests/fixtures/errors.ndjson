@@ -1,0 +1,10 @@
+{"error":{"code":"invalid_request","message":"line is not valid JSON"},"id":null,"kind":"response","ok":false}
+{"error":{"code":"invalid_request","message":"line is not valid UTF-8"},"id":null,"kind":"response","ok":false}
+{"error":{"code":"invalid_request","message":"frame is not a JSON object"},"id":null,"kind":"response","ok":false}
+{"error":{"code":"invalid_request","message":"line is not valid JSON"},"id":null,"kind":"response","ok":false}
+{"error":{"code":"invalid_request","message":"`id` must be a string"},"id":null,"kind":"response","ok":false}
+{"error":{"code":"invalid_request","message":"`id` must be a string"},"id":null,"kind":"response","ok":false}
+{"error":{"code":"invalid_request","message":"`kind` must be \"request\""},"id":"w1","kind":"response","ok":false}
+{"error":{"code":"invalid_request","message":"`method` must be a string"},"id":"m1","kind":"response","ok":false}
+{"error":{"code":"unknown_method","message":"unknown method `file.read`"},"id":"u1","kind":"response","ok":false}
+{"error":{"code":"invalid_params","message":"`params` must be an object"},"id":"p1","kind":"response","ok":false}

@@ -1,11 +1,12 @@
 //! Config, events and the turn runner behind both surfaces.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use etcetera::BaseStrategy;
 
 mod builtins;
+mod changes;
 mod checkpoint;
 mod compaction;
 mod config;
@@ -17,12 +18,15 @@ mod safety;
 mod skills;
 mod tools;
 
+pub use changes::{ChangeStatus, FileChange, TurnChanges, WorkspaceChanges};
 pub use config::{
-    AgentConfig, Config, ConfigPaths, Provider, ProviderConfig, Providers, SkillsConfig,
+    AgentConfig, Config, ConfigPaths, Provider, ProviderConfig, ProviderOption, Providers,
+    SkillsConfig,
 };
 pub use event::{Event, EventKind, ModelOutput, TurnState};
 pub use harness::{
-    Answer, Harness, HarnessOptions, LAST_PROVIDER_SETTING, TurnHandle, UndoOutcome,
+    Answer, Harness, HarnessOptions, LAST_PROVIDER_SETTING, Redactor, TurnHandle, TurnRecord,
+    UndoOutcome, UndoReport, last_provider,
 };
 pub use harness_llm::Usage;
 pub use harness_mcp::{McpServerConfig, McpTransport};
@@ -49,4 +53,16 @@ pub fn api_key_from_env() -> Result<String> {
 pub fn default_db_path() -> Result<PathBuf> {
     let base = etcetera::choose_base_strategy().context("locating the home directory")?;
     Ok(base.data_dir().join(APP_SLUG).join("harness.db"))
+}
+
+/// The user-level config file, `<config dir>/banana-harness/config.toml`, using XDG-style paths
+/// on macOS too. `None` when the home directory is unknown.
+pub fn user_config_path() -> Option<PathBuf> {
+    let base = etcetera::choose_base_strategy().ok()?;
+    Some(base.config_dir().join(APP_SLUG).join("config.toml"))
+}
+
+/// A workspace's own config file, the last configuration layer.
+pub fn workspace_config_path(workspace: &Path) -> PathBuf {
+    workspace.join(".banana-harness").join("config.toml")
 }

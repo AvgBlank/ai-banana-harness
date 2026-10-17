@@ -1,0 +1,161 @@
+/* Banana Harness design tokens. Dark is the default; light is the banana-cream theme.
+   `data-theme` on <html> is "dark", "light" or "system" (follows prefers-color-scheme).
+
+   FROZEN (approved 2026-10-17, wayfinder ticket 04). The production GUI copies this file as is.
+   Change a value only for a concrete bug or an accessibility failure, and run `pnpm tokens:check`.
+   The light values appear twice, in [data-theme="light"] and in the system media query, because CSS
+   cannot share a block between a selector and a media query; the check keeps them identical.
+   Accessibility pass at freeze: --text-faint, --peel and the light --focus were raised to meet
+   WCAG AA (4.5:1 text, 3:1 focus ring); nothing else changed from the approved prototype. */
+
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* surfaces: warm charcoal, raised one step at a time */
+  --bg: #1a1914;
+  --surface-1: #211f19;
+  --surface-2: #28251e;
+  --surface-3: #302d25;
+  --overlay: rgba(10, 9, 6, 0.62);
+
+  /* lines */
+  --border: #3a362c;
+  --border-strong: #4a4538;
+
+  /* text */
+  --text: #f2eedf;
+  --text-muted: #a8a28f;
+  --text-faint: #928b77;
+
+  /* banana: used only for primary action, selection, focus, caret, key highlights */
+  --accent: #ffd60a;
+  --accent-hover: #ffe144;
+  --accent-fg: #1a1914;
+  --accent-text: #ffd60a;
+  --accent-soft: rgba(255, 214, 10, 0.12);
+  --accent-line: rgba(255, 214, 10, 0.38);
+
+  /* banana-peel brown: secondary tone for badges, restricted state, avatars */
+  --peel: #b68a3f;
+  --peel-soft: #35291a;
+  --peel-line: #5a4522;
+
+  /* diffs */
+  --add-bg: rgba(74, 160, 90, 0.13);
+  --add-fg: #86d493;
+  --add-gutter: #2f8a52;
+  --del-bg: rgba(200, 80, 70, 0.10);
+  --del-fg: #f1998f;
+  --del-gutter: #b5483f;
+  --hunk-bg: rgba(255, 214, 10, 0.07);
+
+  /* status */
+  --ok: #86d493;
+  --warn: #f2a93b;
+  --warn-soft: rgba(242, 169, 59, 0.14);
+  --danger: #ea6b61;
+  --danger-soft: rgba(234, 107, 97, 0.14);
+
+  --focus: #ffd60a;
+  --shadow: 0 18px 50px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #fbf6e4;
+  --surface-1: #fffdf3;
+  --surface-2: #f5eed5;
+  --surface-3: #ede4c3;
+  --overlay: rgba(60, 48, 12, 0.34);
+
+  --border: #e2d8b3;
+  --border-strong: #cfc291;
+
+  --text: #2a2618;
+  --text-muted: #6b6448;
+  --text-faint: #736c53;
+
+  --accent: #ffd60a;
+  --accent-hover: #f5c800;
+  --accent-fg: #2a2618;
+  /* yellow text on cream fails contrast, so text-weight uses a deep banana instead */
+  --accent-text: #7d5f00;
+  --accent-soft: rgba(255, 214, 10, 0.26);
+  --accent-line: rgba(160, 120, 0, 0.45);
+
+  --peel: #845f1e;
+  --peel-soft: #f1e4bd;
+  --peel-line: #d9c389;
+
+  --add-bg: rgba(60, 140, 80, 0.11);
+  --add-fg: #1f6b3a;
+  --add-gutter: #3a9a5b;
+  --del-bg: rgba(190, 70, 60, 0.09);
+  --del-fg: #a53a30;
+  --del-gutter: #c9564b;
+  --hunk-bg: rgba(200, 150, 0, 0.1);
+
+  --ok: #1f6b3a;
+  --warn: #9a5f00;
+  --warn-soft: rgba(220, 150, 20, 0.18);
+  --danger: #b3382d;
+  --danger-soft: rgba(190, 70, 60, 0.12);
+
+  --focus: #ad8300;
+  --shadow: 0 18px 50px rgba(90, 70, 10, 0.2), 0 2px 8px rgba(90, 70, 10, 0.12);
+}
+
+@media (prefers-color-scheme: light) {
+  :root[data-theme="system"] {
+    color-scheme: light;
+    --bg: #fbf6e4;
+    --surface-1: #fffdf3;
+    --surface-2: #f5eed5;
+    --surface-3: #ede4c3;
+    --overlay: rgba(60, 48, 12, 0.34);
+    --border: #e2d8b3;
+    --border-strong: #cfc291;
+    --text: #2a2618;
+    --text-muted: #6b6448;
+    --text-faint: #736c53;
+    --accent-hover: #f5c800;
+    --accent-fg: #2a2618;
+    --accent-text: #7d5f00;
+    --accent-soft: rgba(255, 214, 10, 0.26);
+    --accent-line: rgba(160, 120, 0, 0.45);
+    --peel: #845f1e;
+    --peel-soft: #f1e4bd;
+    --peel-line: #d9c389;
+    --add-bg: rgba(60, 140, 80, 0.11);
+    --add-fg: #1f6b3a;
+    --add-gutter: #3a9a5b;
+    --del-bg: rgba(190, 70, 60, 0.09);
+    --del-fg: #a53a30;
+    --del-gutter: #c9564b;
+    --hunk-bg: rgba(200, 150, 0, 0.1);
+    --ok: #1f6b3a;
+    --warn: #9a5f00;
+    --warn-soft: rgba(220, 150, 20, 0.18);
+    --danger: #b3382d;
+    --danger-soft: rgba(190, 70, 60, 0.12);
+    --focus: #ad8300;
+    --shadow: 0 18px 50px rgba(90, 70, 10, 0.2), 0 2px 8px rgba(90, 70, 10, 0.12);
+  }
+}
+
+:root {
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-code: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+
+  --titlebar-h: 44px;
+  --rail-w: 56px;
+  --sidebar-w: 280px;
+  --changes-w: 480px;
+}

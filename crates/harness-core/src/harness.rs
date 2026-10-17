@@ -6,7 +6,7 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use harness_llm::{
     ChatClient, ChatEvent, ClientConfig, Completion, Dialect, Message, Role, ToolCallResult,
     ToolDefinition, Usage,
@@ -15,15 +15,17 @@ use harness_store::{
     FinishTurn, NewCheckpoint, NewEvent, NewSession, NewTurn, Session, Store, UpsertThread,
 };
 use harness_tools::{AskOverrides, AskRequest, ToolResult};
+use serde::{Deserialize, Serialize};
 use tokio::sync::{Semaphore, mpsc, oneshot};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use ulid::{Generator, Ulid};
 
 use crate::builtins::{Builtin, MAX_PARALLEL_SUB_AGENTS, QuestionRequest, SubAgentRequest};
+use crate::changes::{self, TurnChanges, WorkspaceChanges};
 use crate::checkpoint;
 use crate::compaction;
-use crate::config::{Config, Provider};
+use crate::config::{Config, Provider, ProviderOption};
 use crate::event::{Event, EventKind, ModelOutput, TurnState};
 use crate::instructions::{SystemPromptInput, system_prompt};
 use crate::mcp::{McpAuthNotifier, McpRegistry, McpServerStatus};
@@ -31,8 +33,10 @@ use crate::safety::{DoomLoop, DoomLoopAction, TurnLimits};
 use crate::skills::load_skills;
 use crate::tools::{ToolInvocation, TurnTools};
 
-/// How a required action was resolved; see [`TurnHandle::reply`].
-#[derive(Clone, Debug)]
+/// How a required action was resolved; see [`TurnHandle::reply`]. On the wire it is `"allow"`,
+/// `"allow_for_session"`, `"deny"` or `{"text": "..."}`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Answer {
     /// Approval: run the call once, without remembering the rule.
     Allow,
@@ -55,6 +59,17 @@ const MUTATING_TOOLS: [&str; 3] = ["write_file", "edit", "bash"];
 /// The setting key that stores the provider last chosen, read back to preselect the startup
 /// popup and updated whenever `/provider` switches a session.
 pub const LAST_PROVIDER_SETTING: &str = "last_provider";
+
+/// The provider last chosen, if any: what a startup popup preselects and what a new harness
+/// defaults to. A missing, unreadable or unknown stored value counts as none.
+pub fn last_provider(store: &Store) -> Option<Provider> {
+    store
+        .get_setting(LAST_PROVIDER_SETTING)
+        .ok()
+        .flatten()?
+        .parse()
+        .ok()
+}
 
 /// A session's title is the first turn's input, truncated; longer inputs are cut here.
 const MAX_SESSION_TITLE_LEN: usize = 50;
@@ -125,10 +140,39 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// One turn of a replayed session: what was asked, how it ended, and its durable events.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct TurnRecord {
+    pub turn_id: String,
+    /// The turn's 1-based position in its session.
+    pub seq: i64,
+    pub input: String,
+    /// `None` for a turn the database still shows as running: the process stopped before it
+    /// finished, so no `turn.done` was ever written (an interrupted turn).
+    pub state: Option<TurnState>,
+    pub error: Option<String>,
+    /// The usage of the turn's last model call, as stored when it finished.
+    pub usage: Option<Usage>,
+    /// In the order they were written, which is the order the live stream delivered them.
+    pub events: Vec<Event>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum UndoOutcome {
     Restored,
     NothingToUndo,
+}
+
+/// What [`Harness::undo`] did. It serializes as `{"outcome": ...}` plus an `event` field only
+/// when the workspace was restored.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct UndoReport {
+    pub outcome: UndoOutcome,
+    /// The `turn.undone` event just written to the undone turn's log: `Some` exactly when the
+    /// outcome is `Restored`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event: Option<Event>,
 }
 
 impl Harness {
@@ -191,6 +235,76 @@ impl Harness {
         self.inner.store.session(session_id)
     }
 
+    /// The workspace's uncommitted changes against `HEAD`, plus untracked files, each with its
+    /// patch. `git: false` outside a git repository. It runs git and waits, so an async caller
+    /// runs it on a blocking thread.
+    pub fn workspace_changes(&self) -> Result<WorkspaceChanges> {
+        changes::workspace_changes(&self.inner.workspace)
+    }
+
+    /// What the session's last turn changed, against the checkpoint taken before its first
+    /// change: edits made before the turn are left out and `bash` edits are in. `checkpoint:
+    /// false` when there is no last turn or it has no checkpoint. After an undo the files are
+    /// back at the checkpoint, so the list is empty. Blocks on git like [`Self::workspace_changes`].
+    pub fn turn_changes(&self, session_id: &str) -> Result<TurnChanges> {
+        let inner = &self.inner;
+        let none = || TurnChanges {
+            checkpoint: false,
+            files: Vec::new(),
+        };
+        let Some(last_turn) = inner.store.turns(session_id)?.pop() else {
+            return Ok(none());
+        };
+        let Some(row) = inner.store.checkpoint(&last_turn.id)? else {
+            return Ok(none());
+        };
+        Ok(TurnChanges {
+            checkpoint: true,
+            files: changes::changes_since_checkpoint(&inner.workspace, &row)?,
+        })
+    }
+
+    /// A session's turns in order, each with the durable events it wrote. Streamed-only events
+    /// (every `model.message.delta`, and the start marker of each `model.message`) were never
+    /// stored and are absent; a message's text is its final `model.message`. Anything stored
+    /// that cannot be read back, or that disagrees with its own row, fails the whole call
+    /// instead of being skipped, so a partial history is never shown as complete.
+    pub fn transcript(&self, session_id: &str) -> Result<Vec<TurnRecord>> {
+        let store = &self.inner.store;
+        if store.session(session_id)?.is_none() {
+            bail!("session {session_id} not found");
+        }
+        store
+            .turns(session_id)?
+            .into_iter()
+            .map(|turn| turn_record(store, turn))
+            .collect()
+    }
+
+    /// The providers a session can run, in the picker's order, with the model each runs and where
+    /// the API key would be sent. Fails when a configured `base_url` is not a usable URL.
+    pub fn providers(&self) -> Result<Vec<ProviderOption>> {
+        self.inner.config.provider_options()
+    }
+
+    /// Renames a session through the store's single title writer. The title is redacted, then
+    /// trimmed and cut to the length an automatic title gets, and an empty result is rejected.
+    /// A later turn keeps it, because only a session with no title is given an automatic one.
+    pub fn rename_session(&self, session_id: &str, title: &str) -> Result<()> {
+        let inner = &self.inner;
+        if inner.store.session(session_id)?.is_none() {
+            bail!("session {session_id} not found");
+        }
+        // Redacted before it is cut, so the cut cannot leave the front of a key showing.
+        let redacted = inner.redactor.apply(title);
+        let title = cut_title(redacted.trim());
+        let title = title.trim_end();
+        if title.is_empty() {
+            bail!("a session title can't be empty");
+        }
+        inner.store.set_session_title(session_id, title)
+    }
+
     /// Switches a session's provider (`/provider`) and remembers the choice as the next
     /// startup's preselection.
     pub fn switch_provider(&self, session_id: &str, provider: Provider) -> Result<()> {
@@ -216,18 +330,57 @@ impl Harness {
     }
 
     /// `/undo`: restores the workspace to the checkpoint taken before the session's last turn's
-    /// first mutating call, and removes the files that turn created. `NothingToUndo` when that
-    /// turn never mutated the workspace (nothing was checkpointed) or there is no last turn.
-    pub fn undo(&self, session_id: &str) -> Result<UndoOutcome> {
+    /// first mutating call, removes the files that turn created, and records `turn.undone` in
+    /// that turn's log. `NothingToUndo` when there is no last turn, when that turn was already
+    /// undone (its checkpoint is stale, and restoring it again would discard the work done
+    /// since), or when it never mutated the workspace (nothing was checkpointed).
+    // ponytail: the already-undone check and the marker write are not atomic, so two overlapping
+    // undos of one session could both restore; make it one transaction if undo ever overlaps.
+    pub fn undo(&self, session_id: &str) -> Result<UndoReport> {
         let inner = &self.inner;
-        let Some(last_turn) = inner.store.turns(session_id)?.pop() else {
-            return Ok(UndoOutcome::NothingToUndo);
+        let nothing = || UndoReport {
+            outcome: UndoOutcome::NothingToUndo,
+            event: None,
         };
+        let Some(last_turn) = inner.store.turns(session_id)?.pop() else {
+            return Ok(nothing());
+        };
+        let marker = EventKind::TurnUndone {
+            turn_id: last_turn.id.clone(),
+        };
+        let already_undone = inner
+            .store
+            .events(&last_turn.id)?
+            .iter()
+            .any(|row| row.kind == marker.name());
+        if already_undone {
+            return Ok(nothing());
+        }
         let Some(row) = inner.store.checkpoint(&last_turn.id)? else {
-            return Ok(UndoOutcome::NothingToUndo);
+            return Ok(nothing());
         };
         checkpoint::restore(&inner.workspace, &row)?;
-        Ok(UndoOutcome::Restored)
+
+        // Written here rather than by a turn runner: the turn that owns this event ended long
+        // ago. Restoring comes first, so a failure never marks a turn undone that was not.
+        let event = Event {
+            id: new_id(),
+            kind: marker,
+        };
+        inner
+            .store
+            .insert_event(&NewEvent {
+                id: &event.id,
+                turn_id: &last_turn.id,
+                thread_id: event.kind.thread_id(),
+                kind: event.kind.name(),
+                payload_json: &serde_json::to_string(&event)?,
+            })
+            .context("the workspace was restored but the undo could not be recorded")?;
+        Ok(UndoReport {
+            outcome: UndoOutcome::Restored,
+            event: Some(event),
+        })
     }
 
     /// Starts a turn in the background. The stream always ends with `turn.done`.
@@ -305,19 +458,23 @@ impl TurnRunner {
             session_id,
             input: &inner.redactor.apply(input),
         })?;
-        inner
+        let session = inner
             .store
-            .set_session_title_if_unset(session_id, &inner.redactor.apply(&session_title(input)))?;
+            .session(session_id)?
+            .ok_or_else(|| anyhow!("session {session_id} not found"))?;
+        // ponytail: the check and the write are not atomic, so a rename landing between them is
+        // overwritten; make it one conditional UPDATE if turns ever overlap within a session.
+        if session.title.is_none() {
+            inner
+                .store
+                .set_session_title(session_id, &inner.redactor.apply(&session_title(input)))?;
+        }
         self.emit(EventKind::TurnCreated {
             session_id: session_id.to_string(),
             turn_id: self.turn_id.clone(),
         })
         .await?;
 
-        let session = inner
-            .store
-            .session(session_id)?
-            .ok_or_else(|| anyhow!("session {session_id} not found"))?;
         let provider = Provider::from_str(&session.provider)?;
         let provider_config = inner.config.provider(provider);
         let client = ChatClient::new(ClientConfig {
@@ -1063,21 +1220,25 @@ impl harness_mcp::OAuthTokenStore for StoreOAuthTokens {
     }
 }
 
-/// Replaces the API key with `[REDACTED]` in persisted data and tool results.
-struct Redactor {
+/// Replaces the API key with `[REDACTED]` in persisted data and tool results. Public so a
+/// surface that returns its own text, such as error messages, redacts with this one
+/// implementation instead of writing another.
+pub struct Redactor {
     /// The key as it appears inside a JSON string, which covers plain text too.
     needle: String,
 }
 
 impl Redactor {
-    fn new(api_key: &str) -> Self {
+    /// A redactor for `api_key`; an empty key redacts nothing.
+    pub fn new(api_key: &str) -> Self {
         let quoted = serde_json::to_string(api_key).unwrap_or_default();
         Self {
             needle: quoted.trim_matches('"').to_string(),
         }
     }
 
-    fn apply(&self, text: &str) -> String {
+    /// `text` with every occurrence of the key replaced.
+    pub fn apply(&self, text: &str) -> String {
         if self.needle.is_empty() {
             return text.to_string();
         }
@@ -1092,13 +1253,63 @@ fn client_dialect(provider: Provider) -> Dialect {
     }
 }
 
+/// A stored turn and its events as a [`TurnRecord`]; core owns this conversion so no caller
+/// reads store rows.
+fn turn_record(store: &Store, turn: harness_store::Turn) -> Result<TurnRecord> {
+    let state = match turn.state.as_str() {
+        "running" => None,
+        other => Some(
+            other
+                .parse::<TurnState>()
+                .with_context(|| format!("turn {}: unreadable state", turn.id))?,
+        ),
+    };
+    let usage = turn
+        .usage_json
+        .as_deref()
+        .map(serde_json::from_str::<Usage>)
+        .transpose()
+        .with_context(|| format!("turn {}: unreadable usage", turn.id))?;
+    let events = store
+        .events(&turn.id)?
+        .into_iter()
+        .map(|row| stored_event(&turn.id, row))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(TurnRecord {
+        turn_id: turn.id,
+        seq: turn.seq,
+        input: turn.input,
+        state,
+        error: turn.error,
+        usage,
+        events,
+    })
+}
+
+/// A stored event row as an [`Event`]. The row repeats the event's id and kind in columns, so a
+/// payload that disagrees with them is as corrupt as one that does not parse.
+fn stored_event(turn_id: &str, row: harness_store::Event) -> Result<Event> {
+    let event: Event = serde_json::from_str(&row.payload_json)
+        .with_context(|| format!("turn {turn_id}: unreadable `{}` event {}", row.kind, row.id))?;
+    ensure!(
+        event.id == row.id && event.kind.name() == row.kind,
+        "turn {turn_id}: event {} does not match its stored payload",
+        row.id
+    );
+    Ok(event)
+}
+
 /// The first turn's input, trimmed and truncated, becomes the session's title. Later turns
-/// don't call this: `set_session_title_if_unset` only writes it once.
+/// don't call this: `execute` only titles a session that has no title yet.
 fn session_title(input: &str) -> String {
-    let first_line = input.lines().next().unwrap_or("").trim();
-    match first_line.char_indices().nth(MAX_SESSION_TITLE_LEN) {
-        Some((cut, _)) => first_line[..cut].to_string(),
-        None => first_line.to_string(),
+    cut_title(input.lines().next().unwrap_or("").trim())
+}
+
+/// `text` cut to at most [`MAX_SESSION_TITLE_LEN`] characters.
+fn cut_title(text: &str) -> String {
+    match text.char_indices().nth(MAX_SESSION_TITLE_LEN) {
+        Some((cut, _)) => text[..cut].to_string(),
+        None => text.to_string(),
     }
 }
 

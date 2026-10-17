@@ -1,6 +1,17 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
+# The testkit is dev infrastructure: `cargo build` and `make setup` leave it out.
+default-members = [
+    "crates/banana-harness",
+    "crates/harness-core",
+    "crates/harness-tui",
+    "crates/harness-bridge",
+    "crates/harness-llm",
+    "crates/harness-tools",
+    "crates/harness-mcp",
+    "crates/harness-store",
+]
 
 [workspace.package]
 edition = "2024"
@@ -15,6 +26,8 @@ harness-mcp = { path = "crates/harness-mcp" }
 harness-store = { path = "crates/harness-store" }
 harness-core = { path = "crates/harness-core" }
 harness-tui = { path = "crates/harness-tui" }
+harness-bridge = { path = "crates/harness-bridge" }
+harness-testkit = { path = "crates/harness-testkit" }
 
 # Async and HTTP. TLS uses rustls with the `ring` provider (no aws-lc build).
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "process", "fs", "io-util", "io-std", "signal", "time", "sync"] }
@@ -64,6 +77,7 @@ serde_json = "1.0.151"
 anyhow = "1.0.104"
 thiserror = "2.0.21"
 ulid = "3.0.0"
+url = "2.5.8"
 clap = { version = "4.6.7", features = ["derive", "env"] }
 libc = "0.2.189"
 

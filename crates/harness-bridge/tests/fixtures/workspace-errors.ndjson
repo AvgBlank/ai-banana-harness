@@ -1,0 +1,5 @@
+{"error":{"code":"workspace_not_found","message":"workspace not found: /no/such/dir"},"id":"c","kind":"response","ok":false}
+{"error":{"code":"invalid_params","message":"missing field `path`"},"id":"c","kind":"response","ok":false}
+{"error":{"code":"workspace_not_open","message":"workspace is not open: /not/open"},"id":"c","kind":"response","ok":false}
+{"error":{"code":"session_not_found","message":"session missing not found"},"id":"c","kind":"response","ok":false}
+{"error":{"code":"invalid_params","message":"`title` must not be empty"},"id":"c","kind":"response","ok":false}

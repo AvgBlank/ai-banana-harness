@@ -6,7 +6,8 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use harness_core::{
-    Config, Event, EventKind, McpServerStatus, Provider, Session, TurnState, UndoOutcome, Usage,
+    Config, Event, EventKind, FileChange, McpServerStatus, Provider, Session, TurnState,
+    UndoOutcome, Usage,
 };
 
 use crate::input::InputBuffer;
@@ -102,14 +103,6 @@ struct SuggestionState {
     revision: u64,
     selected: usize,
     dismissed: bool,
-}
-
-/// One changed file in the workspace, with its added and removed line counts.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FileChange {
-    pub path: String,
-    pub added: u64,
-    pub removed: u64,
 }
 
 /// A modal shown over the main screen, closed by Esc. `Approval` and `Question` are required
@@ -484,7 +477,7 @@ impl MainState {
     /// place; earlier transcript items are never touched. A subagent's events go into its card.
     pub fn apply_event(&mut self, event: Event) {
         match event.kind {
-            EventKind::TurnCreated { .. } => {}
+            EventKind::TurnCreated { .. } | EventKind::TurnUndone { .. } => {}
             EventKind::TurnDone { state, error } => {
                 self.turn_running = false;
                 self.spinner_frame = 0;
@@ -704,6 +697,7 @@ fn apply_thread_event(items: &mut Vec<TranscriptItem>, kind: EventKind) {
         }
         EventKind::TurnCreated { .. }
         | EventKind::TurnDone { .. }
+        | EventKind::TurnUndone { .. }
         | EventKind::ThreadCreated { .. }
         | EventKind::ThreadDone { .. }
         | EventKind::ToolApprovalRequired { .. }

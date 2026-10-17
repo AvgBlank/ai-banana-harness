@@ -25,7 +25,9 @@ crates/harness-mcp       MCP client (stdio, streamable HTTP, OAuth)
 crates/harness-store     SQLite persistence and migrations
 crates/harness-core      config, events, the turn runner and thread loop
 crates/harness-tui       the terminal app
-crates/banana-harness    the binary (TUI, plus `run` for headless)
+crates/harness-bridge    the sidecar protocol (`banana-harness serve --stdio`)
+crates/banana-harness    the binary (TUI, plus `run` for headless and `serve` for the sidecar)
+crates/harness-testkit   the fake provider, `TestEnv`, scenarios and the `fake-provider` binary (dev only)
 fixtures/, scripts/      the live smoke fixture and script
 ```
 
@@ -37,8 +39,9 @@ make lint   # cargo fmt --check, and clippy with warnings denied
 ```
 
 Tests live in each crate's `tests/` folder and drive the system from the outside: `harness-core`
-tests run real turns against an in-test fake provider, and `harness-tui` tests feed events and key
-presses into the app state and render it with ratatui's `TestBackend`.
+tests run real turns against the fake provider from `harness-testkit`, and `harness-tui` tests feed events and key
+presses into the app state and render it with ratatui's `TestBackend`. `harness-bridge` tests drive the
+sidecar protocol over an in-memory stream, and the binary's `serve_stdio` test runs the real process.
 
 ## Pull requests
 

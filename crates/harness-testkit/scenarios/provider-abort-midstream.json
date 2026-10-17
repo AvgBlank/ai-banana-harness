@@ -1,0 +1,23 @@
+{
+  "name": "provider-abort-midstream",
+  "workspace": "hello-repo",
+  "replies": [
+    {
+      "sse": {
+        "text": "This reply is cut off."
+      },
+      "abort_after_parts": 2
+    }
+  ],
+  "steps": [
+    {
+      "send": "say hi"
+    },
+    {
+      "wait_for": "turn.done"
+    }
+  ],
+  "expect": {
+    "requests": 1
+  }
+}

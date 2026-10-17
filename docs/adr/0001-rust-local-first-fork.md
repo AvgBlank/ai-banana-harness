@@ -5,3 +5,5 @@ Banana Harness is a fork of TrueForge. The fork rewrites the harness in Rust as 
 We chose this because the target is a terminal-first coding agent, judged through a Makefile interface on a clean machine with one API key. Keeping the hosted surfaces would have doubled the port for no benefit to that target.
 
 The trade-off is that upstream TrueForge changes can no longer be merged, and existing API, SDK and UI consumers are not supported.
+
+**Update:** the "only surfaces" part of this decision is superseded by [ADR 0003](0003-desktop-app-surface.md), which adds a desktop app as a third surface. The rest of this decision stands.

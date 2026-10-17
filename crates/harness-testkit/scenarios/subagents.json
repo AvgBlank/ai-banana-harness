@@ -1,0 +1,61 @@
+{
+  "name": "subagents",
+  "workspace": "hello-repo",
+  "replies": [
+    {
+      "sse": {
+        "tool_calls": [
+          {
+            "id": "call_a",
+            "name": "create_sub_agent",
+            "arguments": {
+              "name": "alpha",
+              "input": "task-alpha: say alpha"
+            }
+          },
+          {
+            "id": "call_b",
+            "name": "create_sub_agent",
+            "arguments": {
+              "name": "beta",
+              "input": "task-beta: say beta"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "sse": {
+        "text": "alpha done"
+      },
+      "match": "task-alpha: say alpha",
+      "delay_ms": 20
+    },
+    {
+      "sse": {
+        "text": "beta done"
+      },
+      "match": "task-beta: say beta",
+      "delay_ms": 20
+    },
+    {
+      "sse": {
+        "text": "Both subagents finished."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "send": "split the work"
+    },
+    {
+      "wait_for": "turn.done"
+    }
+  ],
+  "expect": {
+    "requests": 4,
+    "ui": [
+      "Both subagents finished."
+    ]
+  }
+}

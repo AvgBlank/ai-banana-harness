@@ -1,0 +1,2 @@
+{"id":"l1","kind":"request","method":"session.list","params":{}}
+{"id":"l1","kind":"response","ok":true,"result":{"sessions":[{"created_at":"<time>","id":"<session-0>","model":"deepseek-flash","provider":"deepseek","title":null,"updated_at":"<time>","workspace":"<base>/beta"},{"created_at":"<time>","id":"<session-1>","model":"deepseek-flash","provider":"deepseek","title":null,"updated_at":"<time>","workspace":"<base>/alpha"}]}}

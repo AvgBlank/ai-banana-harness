@@ -8,11 +8,14 @@ publish.workspace = true
 [dependencies]
 harness-core.workspace = true
 harness-tui.workspace = true
+harness-bridge.workspace = true
 anyhow.workspace = true
 clap.workspace = true
-etcetera.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
+harness-testkit.workspace = true
 
 [lints]
 workspace = true

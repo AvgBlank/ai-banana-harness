@@ -2,8 +2,9 @@
 
 mod common;
 
-use common::{TestHarness, fixture};
-use harness_core::{Event, EventKind, Provider, TurnState};
+use common::TestHarness;
+use harness_core::{Event, EventKind, Provider, Redactor, TurnState};
+use harness_testkit::fixture;
 use serde_json::{Value, json};
 
 /// One DeepSeek tool-call reply asking for `name(arguments)`.
@@ -76,4 +77,26 @@ async fn doom_loop_warns_at_three_and_ends_at_five() {
         fourth_request_text.contains("<bh-internal>") && fourth_request_text.contains("3 times"),
         "expected the 4th request to carry the warning injected after the 3rd repeat: {fourth_request_text}"
     );
+}
+
+#[test]
+fn the_redactor_replaces_every_occurrence_of_the_key() {
+    let redactor = Redactor::new("sk-abc123");
+    assert_eq!(
+        redactor.apply("a sk-abc123 b sk-abc123"),
+        "a [REDACTED] b [REDACTED]"
+    );
+    assert_eq!(redactor.apply("nothing to hide"), "nothing to hide");
+}
+
+#[test]
+fn the_redactor_finds_a_key_inside_json_text_and_an_empty_key_redacts_nothing() {
+    // A key with a character JSON escapes still matches in its escaped, in-text form.
+    let redactor = Redactor::new("sk\"quoted");
+    let text = serde_json::to_string("token sk\"quoted end").unwrap();
+    let redacted = redactor.apply(&text);
+    assert!(!redacted.contains("quoted"), "{redacted}");
+    assert!(redacted.contains("[REDACTED]"));
+
+    assert_eq!(Redactor::new("").apply("unchanged"), "unchanged");
 }

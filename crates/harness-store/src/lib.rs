@@ -5,6 +5,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use anyhow::{Context, Result, anyhow};
 use rusqlite::{Connection, OptionalExtension, params};
+use serde::Serialize;
 
 /// Applied in order; `PRAGMA user_version` records how many have run. Never edit a shipped one.
 const MIGRATIONS: &[&str] = &[
@@ -31,7 +32,7 @@ pub struct NewSession<'a> {
     pub model: &'a str,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Session {
     pub id: String,
     pub title: Option<String>,
@@ -203,11 +204,12 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
-    /// Sets the session's title if it doesn't have one yet; later calls are no-ops, matching
-    /// the reference implementation's first-write-wins semantics.
-    pub fn set_session_title_if_unset(&self, session_id: &str, title: &str) -> Result<()> {
+    /// Sets the session's title, replacing any earlier one. The only title writer: the first
+    /// turn's automatic title and a user's rename both go through it. A title is not activity,
+    /// so `updated_at` is left alone and the session keeps its place in the list.
+    pub fn set_session_title(&self, session_id: &str, title: &str) -> Result<()> {
         self.conn()?.execute(
-            "UPDATE session SET title = ?2 WHERE id = ?1 AND title IS NULL",
+            "UPDATE session SET title = ?2 WHERE id = ?1",
             params![session_id, title],
         )?;
         Ok(())

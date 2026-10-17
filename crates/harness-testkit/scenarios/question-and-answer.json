@@ -1,0 +1,47 @@
+{
+  "name": "question-and-answer",
+  "workspace": "hello-repo",
+  "replies": [
+    {
+      "sse": {
+        "tool_calls": [
+          {
+            "id": "call_1",
+            "name": "ask_question",
+            "arguments": {
+              "question": "What is your name?"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "sse": {
+        "text": "Nice to meet you, Ada."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "send": "greet me"
+    },
+    {
+      "answer": "Ada"
+    },
+    {
+      "wait_for": "turn.done"
+    }
+  ],
+  "expect": {
+    "requests": 2,
+    "request_contains": [
+      {
+        "index": 1,
+        "text": "Ada"
+      }
+    ],
+    "ui": [
+      "Nice to meet you, Ada."
+    ]
+  }
+}

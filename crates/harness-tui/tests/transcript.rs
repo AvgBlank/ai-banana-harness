@@ -324,3 +324,19 @@ fn the_status_line_shows_each_mcp_servers_state() {
         "{view}"
     );
 }
+
+#[test]
+fn an_undo_marker_event_changes_nothing_on_screen() {
+    let mut app = App::new_main(Provider::DeepSeek, std::env::temp_dir());
+    app.main_mut()
+        .unwrap()
+        .push_user_message("undo me".to_string());
+    let before = rendered(&app);
+
+    app.main_mut()
+        .unwrap()
+        .apply_event(event(EventKind::TurnUndone {
+            turn_id: "turn-1".to_string(),
+        }));
+    assert_eq!(rendered(&app), before);
+}

@@ -148,8 +148,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "etcetera",
+ "harness-bridge",
  "harness-core",
+ "harness-testkit",
  "harness-tui",
  "serde_json",
  "tokio",
@@ -985,6 +986,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "harness-bridge"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "harness-core",
+ "harness-testkit",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "harness-core"
 version = "0.1.0"
 dependencies = [
@@ -993,6 +1009,7 @@ dependencies = [
  "harness-llm",
  "harness-mcp",
  "harness-store",
+ "harness-testkit",
  "harness-tools",
  "oauth2",
  "rmcp",
@@ -1003,6 +1020,7 @@ dependencies = [
  "tokio-util",
  "toml",
  "ulid",
+ "url",
 ]
 
 [[package]]
@@ -1041,7 +1059,21 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "rusqlite",
+ "serde",
+ "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "harness-testkit"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

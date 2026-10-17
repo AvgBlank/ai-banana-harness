@@ -1,0 +1,41 @@
+{
+  "name": "key-never-leaks",
+  "workspace": "hello-repo",
+  "replies": [
+    {
+      "sse": {
+        "tool_calls": [
+          {
+            "id": "call_1",
+            "name": "bash",
+            "arguments": {
+              "command": "printenv AI_API_KEY"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "sse": {
+        "text": "Checked the environment."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "send": "print the key"
+    },
+    {
+      "approve": "allow"
+    },
+    {
+      "wait_for": "turn.done"
+    }
+  ],
+  "expect": {
+    "requests": 2,
+    "ui": [
+      "Checked the environment."
+    ]
+  }
+}

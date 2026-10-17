@@ -1,0 +1,2 @@
+{"id":"bye","kind":"request","method":"shutdown","params":{}}
+{"id":"bye","kind":"response","ok":true,"result":{}}

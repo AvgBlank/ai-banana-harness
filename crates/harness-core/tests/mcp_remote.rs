@@ -6,8 +6,9 @@ mod common;
 #[path = "../../harness-mcp/tests/fixture/http_fixture.rs"]
 mod http_fixture;
 
-use common::{TestHarness, sse_text, sse_tool_calls};
+use common::TestHarness;
 use harness_core::{EventKind, Provider};
+use harness_testkit::{sse_text, sse_tool_calls};
 use oauth2::basic::BasicTokenType;
 use oauth2::{AccessToken, StandardTokenResponse};
 use rmcp::transport::auth::{StoredCredentials, VendorExtraTokenFields};

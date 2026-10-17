@@ -3,9 +3,9 @@ use std::fmt;
 use std::path::Path;
 use std::str::FromStr;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use harness_mcp::McpServerConfig;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 const DEFAULT_CONFIG: &str = include_str!("../../../config/default.toml");
 
@@ -93,6 +93,52 @@ impl Config {
             Provider::Qwen => &self.providers.qwen,
         }
     }
+
+    /// The providers in the picker's order, each with where its API key would be sent. Fails
+    /// when a `base_url` is not a usable URL, because its destination could not be shown or
+    /// checked; the message never repeats the URL, which may carry credentials.
+    pub(crate) fn provider_options(&self) -> Result<Vec<ProviderOption>> {
+        [Provider::DeepSeek, Provider::Qwen]
+            .into_iter()
+            .map(|provider| {
+                let config = self.provider(provider);
+                let (scheme, host) = key_destination(&config.base_url)
+                    .with_context(|| format!("provider `{provider}` has an unusable base_url"))?;
+                Ok(ProviderOption {
+                    provider,
+                    model: config.model.clone(),
+                    host,
+                    scheme,
+                })
+            })
+            .collect()
+    }
+}
+
+/// One selectable provider as a picker shows it: what a session would run and where the API
+/// key would be sent.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct ProviderOption {
+    pub provider: Provider,
+    pub model: String,
+    /// The `base_url` authority: the host plus an explicit non-default port, never userinfo.
+    pub host: String,
+    /// `https` for the default endpoints; shown so a downgrade to `http` is visible.
+    pub scheme: String,
+}
+
+/// The scheme and authority of `base_url`, which together name where a request, and the key
+/// in its header, would go.
+fn key_destination(base_url: &str) -> Result<(String, String)> {
+    let url = url::Url::parse(base_url).context("not a valid URL")?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow!("the URL has no host"))?;
+    let authority = match url.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host.to_string(),
+    };
+    Ok((url.scheme().to_string(), authority))
 }
 
 /// Deep-merges TOML tables; `overlay` wins on every key it sets, recursing into nested tables
@@ -113,7 +159,8 @@ fn merge_toml(base: &mut toml::Value, overlay: toml::Value) {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Provider {
     DeepSeek,
     Qwen,

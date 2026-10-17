@@ -1,13 +1,26 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::path::PathBuf;
-use std::process::Command;
 
-use harness_core::{Config, Event, EventKind, ModelOutput, Provider, TurnState, Usage};
-use harness_tui::app::{App, COMMANDS, FileChange, MainState, SCROLL_STEP};
-use harness_tui::{ui, workspace_changes};
+use harness_core::{
+    ChangeStatus, Config, Event, EventKind, FileChange, ModelOutput, Provider, TurnState, Usage,
+};
+use harness_tui::app::{App, COMMANDS, MainState, SCROLL_STEP};
+use harness_tui::ui;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+
+/// A modified file with the given counts; the sidebar shows counts only, so no patch is needed.
+fn change(path: &str, added: u64, removed: u64) -> FileChange {
+    FileChange {
+        path: path.to_string(),
+        status: ChangeStatus::Modified,
+        added,
+        removed,
+        patch: None,
+        truncated: false,
+    }
+}
 
 fn rendered(app: &App, width: u16, height: u16) -> String {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
@@ -60,11 +73,7 @@ fn usage(prompt: u64, completion: u64) -> Usage {
 fn the_sidebar_renders_at_120_columns() {
     let mut app = main_app();
     let main = app.main_mut().unwrap();
-    main.modified_files = vec![FileChange {
-        path: "src/lib.rs".to_string(),
-        added: 12,
-        removed: 3,
-    }];
+    main.modified_files = vec![change("src/lib.rs", 12, 3)];
     run_turn(main, usage(104_000, 858), TurnState::Done);
 
     let view = rendered(&app, 120, 40);
@@ -106,18 +115,7 @@ fn ctrl_b_state_hides_the_sidebar_even_when_wide() {
 fn the_summary_card_renders_after_turn_done() {
     let mut app = main_app();
     let main = app.main_mut().unwrap();
-    main.modified_files = vec![
-        FileChange {
-            path: "a.rs".to_string(),
-            added: 1,
-            removed: 0,
-        },
-        FileChange {
-            path: "b.rs".to_string(),
-            added: 2,
-            removed: 2,
-        },
-    ];
+    main.modified_files = vec![change("a.rs", 1, 0), change("b.rs", 2, 2)];
     run_turn(main, usage(1_000, 234), TurnState::Done);
 
     let view = rendered(&app, 90, 30);
@@ -238,55 +236,4 @@ fn the_input_grows_from_three_to_eight_rows() {
     assert_eq!(rows("one\ntwo\nthree"), 5);
     assert_eq!(rows("one\n"), 4);
     assert_eq!(rows(&"line\n".repeat(20)), 8);
-}
-
-#[test]
-fn workspace_changes_lists_edits_and_new_files_with_line_counts() {
-    let dir = std::env::temp_dir().join(format!("bh-tui-changes-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let git = |args: &[&str]| {
-        let status = Command::new("git")
-            .arg("-C")
-            .arg(&dir)
-            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
-            .args(args)
-            .status()
-            .unwrap();
-        assert!(status.success());
-    };
-    git(&["init", "-q"]);
-    std::fs::write(dir.join("kept.txt"), "a\nb\nc\n").unwrap();
-    git(&["add", "."]);
-    git(&["commit", "-qm", "init"]);
-
-    std::fs::write(dir.join("kept.txt"), "a\nB\nc\nd\n").unwrap();
-    std::fs::write(dir.join("new.txt"), "x\ny\n").unwrap();
-
-    let changes = workspace_changes(&dir);
-    std::fs::remove_dir_all(&dir).unwrap();
-    assert_eq!(
-        changes,
-        vec![
-            FileChange {
-                path: "kept.txt".to_string(),
-                added: 2,
-                removed: 1,
-            },
-            FileChange {
-                path: "new.txt".to_string(),
-                added: 2,
-                removed: 0,
-            },
-        ]
-    );
-}
-
-#[test]
-fn a_workspace_outside_git_has_no_changes() {
-    let dir = std::env::temp_dir().join(format!("bh-tui-nogit-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    // temp_dir itself is not inside a repository on any sane machine.
-    assert!(workspace_changes(&dir).is_empty());
-    std::fs::remove_dir_all(&dir).unwrap();
 }

@@ -1,0 +1,47 @@
+{
+  "name": "bash-and-test",
+  "workspace": "hello-repo",
+  "replies": [
+    {
+      "sse": {
+        "tool_calls": [
+          {
+            "id": "call_1",
+            "name": "bash",
+            "arguments": {
+              "command": "sh check.sh"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "sse": {
+        "text": "The check printed ok."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "send": "run the check"
+    },
+    {
+      "approve": "allow"
+    },
+    {
+      "wait_for": "turn.done"
+    }
+  ],
+  "expect": {
+    "requests": 2,
+    "request_contains": [
+      {
+        "index": 1,
+        "text": "ok"
+      }
+    ],
+    "ui": [
+      "The check printed ok."
+    ]
+  }
+}

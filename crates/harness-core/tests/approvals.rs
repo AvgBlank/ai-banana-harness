@@ -2,8 +2,10 @@
 
 mod common;
 
-use common::{TestHarness, sse_text, sse_tool_calls};
-use harness_core::{Answer, PatternRules, PermissionAction, Provider, TurnState};
+use common::TestHarness;
+use harness_core::{Answer, PatternRules, PermissionAction, Provider, TurnState, UndoOutcome};
+use harness_testkit::{sse_text, sse_tool_calls};
+use serde_json::json;
 
 #[tokio::test]
 async fn ask_rule_allow_deny_and_allow_for_session() {
@@ -215,4 +217,63 @@ async fn headless_auto_answers_a_question_and_the_turn_finishes_done() {
         response,
         "No user available; proceed with your best judgement"
     );
+}
+
+#[test]
+fn answers_use_their_documented_json_shapes() {
+    let cases = [
+        (Answer::Allow, json!("allow")),
+        (Answer::AllowForSession, json!("allow_for_session")),
+        (Answer::Deny, json!("deny")),
+        (Answer::Text("blue".to_string()), json!({"text": "blue"})),
+    ];
+    for (answer, expected) in cases {
+        assert_eq!(serde_json::to_value(&answer).unwrap(), expected);
+        let parsed: Answer = serde_json::from_value(expected.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&parsed).unwrap(), expected);
+    }
+    for invalid in [
+        json!("Allow"),
+        json!("always"),
+        json!({"text": 1}),
+        json!(null),
+    ] {
+        assert!(
+            serde_json::from_value::<Answer>(invalid.clone()).is_err(),
+            "{invalid}"
+        );
+    }
+}
+
+#[test]
+fn undo_outcomes_use_snake_case_json() {
+    for (outcome, expected) in [
+        (UndoOutcome::Restored, json!("restored")),
+        (UndoOutcome::NothingToUndo, json!("nothing_to_undo")),
+    ] {
+        assert_eq!(serde_json::to_value(outcome).unwrap(), expected);
+        assert_eq!(
+            serde_json::from_value::<UndoOutcome>(expected).unwrap(),
+            outcome
+        );
+    }
+    assert!(serde_json::from_value::<UndoOutcome>(json!("NothingToUndo")).is_err());
+}
+
+#[test]
+fn providers_use_lowercase_json_that_matches_their_text_form() {
+    for (provider, expected) in [
+        (Provider::DeepSeek, json!("deepseek")),
+        (Provider::Qwen, json!("qwen")),
+    ] {
+        assert_eq!(serde_json::to_value(provider).unwrap(), expected);
+        assert_eq!(expected, json!(provider.as_str()));
+        assert_eq!(
+            serde_json::from_value::<Provider>(expected).unwrap(),
+            provider
+        );
+    }
+    // The wire form is strict lowercase, unlike the command line's case-insensitive parse.
+    assert!(serde_json::from_value::<Provider>(json!("DeepSeek")).is_err());
+    assert!(serde_json::from_value::<Provider>(json!("gpt")).is_err());
 }

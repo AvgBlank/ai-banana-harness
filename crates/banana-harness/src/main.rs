@@ -4,11 +4,11 @@ use std::process::ExitCode;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use etcetera::BaseStrategy;
 use harness_core::{
-    APP_SLUG, Config, ConfigPaths, EventKind, Harness, HarnessOptions, Provider, Store, TurnState,
-    api_key_from_env, default_db_path,
+    Config, ConfigPaths, EventKind, Harness, HarnessOptions, Provider, Store, TurnState,
+    api_key_from_env, default_db_path, user_config_path, workspace_config_path,
 };
+use tokio::signal::unix::{SignalKind, signal};
 
 #[derive(Parser)]
 #[command(version, about = "A local-first coding agent")]
@@ -33,6 +33,12 @@ enum Command {
         json: bool,
         task: String,
     },
+    /// Serve the desktop app's protocol (newline-delimited JSON) on stdin and stdout.
+    Serve {
+        /// The only transport; required so another one cannot be picked by accident.
+        #[arg(long, required = true)]
+        stdio: bool,
+    },
 }
 
 #[tokio::main]
@@ -46,11 +52,35 @@ async fn main() -> ExitCode {
             json,
             task,
         }) => headless(provider, workspace, json, task).await,
+        Some(Command::Serve { .. }) => serve_stdio().await,
     };
     result.unwrap_or_else(|e| {
         eprintln!("error: {e:#}");
         ExitCode::from(1)
     })
+}
+
+async fn serve_stdio() -> Result<ExitCode> {
+    // Before anything else can print: stdout carries protocol frames only from here on.
+    let out = tokio::fs::File::from_std(harness_bridge::claim_stdout()?);
+    // The bridge reports a missing key through `ready.api_key_present`, so it is not an error.
+    let api_key = api_key_from_env().unwrap_or_default();
+    let options = harness_bridge::BridgeOptions {
+        db_path: default_db_path()?,
+        user_config: user_config_path(),
+        api_key,
+    };
+    let mut terminate = signal(SignalKind::terminate())?;
+    let mut interrupt = signal(SignalKind::interrupt())?;
+    let signalled = async {
+        tokio::select! {
+            _ = terminate.recv() => {}
+            _ = interrupt.recv() => {}
+        }
+    };
+    harness_bridge::serve(tokio::io::stdin(), out, options, signalled).await?;
+    // The stdin read may still be blocking its thread; exit rather than wait for it.
+    std::process::exit(0);
 }
 
 async fn headless(
@@ -67,10 +97,8 @@ async fn headless(
     let workspace = workspace
         .canonicalize()
         .with_context(|| format!("workspace {} not found", workspace.display()))?;
-    let user_config = etcetera::choose_base_strategy()
-        .ok()
-        .map(|base| base.config_dir().join(APP_SLUG).join("config.toml"));
-    let workspace_config = workspace.join(".banana-harness").join("config.toml");
+    let user_config = user_config_path();
+    let workspace_config = workspace_config_path(&workspace);
     let config = Config::load(ConfigPaths {
         user: user_config.as_deref(),
         workspace: Some(&workspace_config),

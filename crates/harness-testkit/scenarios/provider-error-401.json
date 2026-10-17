@@ -1,0 +1,21 @@
+{
+  "name": "provider-error-401",
+  "workspace": "hello-repo",
+  "replies": [
+    {
+      "status": 401,
+      "error": "{\"error\":{\"message\":\"invalid api key\"}}"
+    }
+  ],
+  "steps": [
+    {
+      "send": "say hi"
+    },
+    {
+      "wait_for": "turn.done"
+    }
+  ],
+  "expect": {
+    "requests": 1
+  }
+}

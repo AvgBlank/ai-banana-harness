@@ -1,0 +1,33 @@
+{
+  "name": "slow-stream-gated",
+  "workspace": "hello-repo",
+  "replies": [
+    {
+      "sse": {
+        "text": "A slow answer."
+      },
+      "gate": "mid-stream",
+      "gate_after_parts": 2
+    }
+  ],
+  "steps": [
+    {
+      "send": "answer slowly"
+    },
+    {
+      "wait_for": "model.message.delta"
+    },
+    {
+      "release": "mid-stream"
+    },
+    {
+      "wait_for": "turn.done"
+    }
+  ],
+  "expect": {
+    "requests": 1,
+    "ui": [
+      "A slow answer."
+    ]
+  }
+}

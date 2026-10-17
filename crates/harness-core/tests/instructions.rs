@@ -3,8 +3,9 @@
 
 mod common;
 
-use common::{TestHarness, fixture};
+use common::TestHarness;
 use harness_core::{EventKind, Provider, TurnState};
+use harness_testkit::fixture;
 
 fn write_skill(base: &std::path::Path, dir_name: &str, frontmatter_name: &str, description: &str) {
     let skill_dir = base.join(dir_name);

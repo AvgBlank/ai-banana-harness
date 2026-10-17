@@ -1,3 +1,6 @@
+use std::str::FromStr;
+
+use anyhow::{Result, bail};
 use harness_llm::Usage;
 use serde::{Deserialize, Serialize};
 
@@ -20,7 +23,14 @@ pub enum EventKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
-    /// Sent twice per LLM call: first as a start marker with no `message`, then with the final message.
+    /// The workspace was restored to the checkpoint taken before this turn's first change. It is
+    /// written to the undone turn's own log after the turn ended, so a replayed transcript shows
+    /// it and the turn cannot be undone twice; it never appears on a live turn stream.
+    #[serde(rename = "turn.undone")]
+    TurnUndone { turn_id: String },
+    /// One LLM call's message. It is streamed twice: first as a start marker with no `message`,
+    /// then with the final message. Only the final one is persisted, so a replayed transcript has
+    /// no start marker; the marker and the deltas exist on the live stream alone.
     #[serde(rename = "model.message")]
     ModelMessage {
         thread_id: String,
@@ -108,6 +118,7 @@ impl EventKind {
         match self {
             EventKind::TurnCreated { .. } => "turn.created",
             EventKind::TurnDone { .. } => "turn.done",
+            EventKind::TurnUndone { .. } => "turn.undone",
             EventKind::ModelMessage { .. } => "model.message",
             EventKind::ModelMessageDelta { .. } => "model.message.delta",
             EventKind::ToolCall { .. } => "tool.call",
@@ -134,7 +145,9 @@ impl EventKind {
             | EventKind::ThreadDone { thread_id, .. }
             | EventKind::ToolApprovalRequired { thread_id, .. }
             | EventKind::ToolResponseRequired { thread_id, .. } => Some(thread_id),
-            EventKind::TurnCreated { .. } | EventKind::TurnDone { .. } => None,
+            EventKind::TurnCreated { .. }
+            | EventKind::TurnDone { .. }
+            | EventKind::TurnUndone { .. } => None,
         }
     }
 }
@@ -160,6 +173,21 @@ impl TurnState {
             TurnState::Done => "done",
             TurnState::Error => "error",
             TurnState::Cancelled => "cancelled",
+        }
+    }
+}
+
+impl FromStr for TurnState {
+    type Err = anyhow::Error;
+
+    /// The inverse of [`TurnState::as_str`]. A turn that never finished is stored as `running`,
+    /// which is not a state a turn ends in, so it is rejected here and handled by the caller.
+    fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "done" => Ok(TurnState::Done),
+            "error" => Ok(TurnState::Error),
+            "cancelled" => Ok(TurnState::Cancelled),
+            other => bail!("unknown turn state `{other}`"),
         }
     }
 }

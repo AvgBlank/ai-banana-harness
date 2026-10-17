@@ -6,8 +6,9 @@ use std::collections::HashSet;
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
 
-use common::{TestHarness, fixture};
+use common::TestHarness;
 use harness_core::{Event, EventKind, Provider, TurnState};
+use harness_testkit::fixture;
 
 fn names(events: &[Event]) -> Vec<&'static str> {
     events.iter().map(|e| e.kind.name()).collect()

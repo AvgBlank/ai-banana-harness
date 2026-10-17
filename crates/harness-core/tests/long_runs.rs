@@ -106,7 +106,7 @@ fn assert_done(events: &[Event]) {
     );
 }
 
-fn messages(request: &common::Request) -> Vec<Value> {
+fn messages(request: &harness_testkit::Request) -> Vec<Value> {
     request.body["messages"].as_array().unwrap().clone()
 }
 
@@ -247,7 +247,7 @@ async fn a_huge_tool_result_is_spilled_to_a_file_and_the_model_gets_its_path_and
 #[tokio::test]
 async fn a_spilled_result_redacts_the_api_key_before_writing_the_file() {
     let t = TestHarness::open(Provider::DeepSeek).await;
-    let source = format!("{}{}", "a".repeat(30_000), common::TEST_API_KEY);
+    let source = format!("{}{}", "a".repeat(30_000), harness_testkit::TEST_API_KEY);
     std::fs::write(t.workspace.join("big.txt"), &source).unwrap();
     push_calls(&t, &[read_call("call_1", "big.txt")], 50);
     t.provider.push_sse(answer_sse("Done.", 100, 5));
@@ -260,13 +260,13 @@ async fn a_spilled_result_redacts_the_api_key_before_writing_the_file() {
     assert!(
         !std::fs::read_to_string(t.workspace.join(path))
             .unwrap()
-            .contains(common::TEST_API_KEY)
+            .contains(harness_testkit::TEST_API_KEY)
     );
     assert!(
         !t.provider.requests()[1]
             .body
             .to_string()
-            .contains(common::TEST_API_KEY)
+            .contains(harness_testkit::TEST_API_KEY)
     );
 }
 

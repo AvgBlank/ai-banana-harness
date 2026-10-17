@@ -4,8 +4,9 @@ mod common;
 
 use std::time::Duration;
 
-use common::{TestHarness, collect, fixture};
+use common::{TestHarness, collect};
 use harness_core::{EventKind, Provider, TurnState};
+use harness_testkit::fixture;
 
 #[tokio::test]
 async fn cancelling_a_running_turn_ends_it_as_cancelled() {

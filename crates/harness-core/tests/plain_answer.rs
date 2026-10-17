@@ -2,8 +2,9 @@
 
 mod common;
 
-use common::{TEST_API_KEY, TestHarness, fixture};
+use common::TestHarness;
 use harness_core::{Event, EventKind, ModelOutput, Provider, TurnState, Usage};
+use harness_testkit::{TEST_API_KEY, fixture};
 use serde_json::json;
 
 fn names(events: &[Event]) -> Vec<&'static str> {
@@ -91,10 +92,9 @@ async fn deepseek_plain_answer_streams_and_persists() {
     assert_eq!(requests.len(), 1);
     let request = &requests[0];
     assert_eq!(request.path, "/chat/completions");
-    assert_eq!(
-        request.headers["authorization"],
-        format!("Bearer {TEST_API_KEY}")
-    );
+    // The stub checks the key and records only that it matched.
+    assert!(request.auth_ok);
+    assert_eq!(request.headers["authorization"], "[redacted]");
     let body = &request.body;
     assert_eq!(body["model"], "deepseek-flash");
     assert_eq!(body["stream"], true);

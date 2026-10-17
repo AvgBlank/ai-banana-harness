@@ -1,0 +1,31 @@
+{
+  "name": "plain-answer",
+  "workspace": "hello-repo",
+  "replies": [
+    {
+      "file": "deepseek_plain.sse"
+    }
+  ],
+  "steps": [
+    {
+      "send": "say hi"
+    },
+    {
+      "wait_for": "turn.done"
+    }
+  ],
+  "expect": {
+    "events": [
+      "turn.created",
+      "model.message",
+      "model.message.delta",
+      "model.message.delta",
+      "model.message",
+      "turn.done"
+    ],
+    "requests": 1,
+    "ui": [
+      "Hello there!"
+    ]
+  }
+}

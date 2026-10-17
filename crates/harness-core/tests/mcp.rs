@@ -6,8 +6,9 @@ mod common;
 
 use std::path::{Path, PathBuf};
 
-use common::{TestHarness, collect, fixture};
+use common::{TestHarness, collect};
 use harness_core::{Event, EventKind, McpServerState, McpServerStatus, Provider, TurnState};
+use harness_testkit::fixture;
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
