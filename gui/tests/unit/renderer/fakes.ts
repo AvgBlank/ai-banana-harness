@@ -1,7 +1,7 @@
 import { type Mocked, vi } from "vitest";
 import type { Client, SidecarStatus } from "../../../src/renderer/lib/client";
 import type { KeyStatus, Prefs, PrefsPatch } from "../../../src/shared/api";
-import type { ProviderOption, Session } from "../../../src/shared/protocol";
+import type { EventFrame, ProviderOption, Session } from "../../../src/shared/protocol";
 
 export function session(over: Partial<Session> & Pick<Session, "id" | "workspace">): Session {
   return {
@@ -27,12 +27,26 @@ export const PROVIDERS: ProviderOption[] = [
   { provider: "qwen", model: "qwen3.8-flash", host: "dashscope.aliyuncs.com", scheme: "https" },
 ];
 
-export type FakeClient = Mocked<Client> & { pushState(status: SidecarStatus): void };
+export type FakeClient = Mocked<Client> & {
+  pushState(status: SidecarStatus): void;
+  /** Delivers a frame as main would forward it. */
+  pushEvent(frame: EventFrame): void;
+};
+
+export function frame(
+  sessionId: string,
+  turnId: string | null,
+  event: { id: string; type: string; [k: string]: unknown },
+  workspace = "/w",
+): EventFrame {
+  return { kind: "event", workspace, session_id: sessionId, turn_id: turnId, event } as EventFrame;
+}
 
 /** An in-memory stand-in for the preload API; every method is a spy. */
 export function fakeClient(
   options: {
     sessions?: Session[];
+    turns?: Record<string, unknown[]>;
     running?: string[];
     prefs?: Prefs;
     picked?: string | null;
@@ -41,6 +55,8 @@ export function fakeClient(
   } = {},
 ): FakeClient {
   const listeners = new Set<(status: SidecarStatus) => void>();
+  const created: Session[] = [];
+  const eventListeners = new Set<(frame: EventFrame) => void>();
   const stored: Prefs = { ...DEFAULT_PREFS, ...options.prefs };
   let key: KeyStatus = options.key ?? { present: true, source: "env" };
   const client = {
@@ -61,7 +77,7 @@ export function fakeClient(
       key = { present: true, source: "session" };
       return key;
     }),
-    listSessions: vi.fn(async () => options.sessions ?? []),
+    listSessions: vi.fn(async () => [...created, ...(options.sessions ?? [])]),
     runningSessions: vi.fn(async () => options.running ?? []),
     renameSession: vi.fn(async (_workspace: string, id: string, title: string) =>
       session({ id, workspace: "/w", title }),
@@ -73,6 +89,24 @@ export function fakeClient(
       listeners.add(listener);
       return () => listeners.delete(listener);
     }),
+    createSession: vi.fn(async (workspace: string) => {
+      const made = session({ id: "new1", workspace, title: null });
+      created.push(made);
+      return made;
+    }),
+    resume: vi.fn(async (_workspace: string, id: string) => ({
+      session: session({ id, workspace: "/w" }),
+      turns: options.turns?.[id] ?? [],
+    })),
+    startTurn: vi.fn(async (_w: string, _s: string, _i: string) => undefined),
+    cancelTurn: vi.fn(async (_w: string, _s: string) => undefined),
+    onSidecarEvent: vi.fn((listener: (f: EventFrame) => void) => {
+      eventListeners.add(listener);
+      return () => eventListeners.delete(listener);
+    }),
+    pushEvent: (f: EventFrame) => {
+      for (const listener of eventListeners) listener(f);
+    },
     pushState: (status: SidecarStatus) => {
       for (const listener of listeners) listener(status);
     },

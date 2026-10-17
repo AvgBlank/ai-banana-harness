@@ -26,6 +26,8 @@ export interface UiState {
   modelOpen: boolean;
   workspaceMenuOpen: boolean;
   draft: string;
+  /** Why the last send failed; kept here because the composer is rebuilt when the view changes. */
+  sendError: string | null;
 }
 
 export const initialState: UiState = {
@@ -38,6 +40,7 @@ export const initialState: UiState = {
   modelOpen: false,
   workspaceMenuOpen: false,
   draft: "",
+  sendError: null,
 };
 
 function reducer(state: UiState, patch: Partial<UiState>): UiState {

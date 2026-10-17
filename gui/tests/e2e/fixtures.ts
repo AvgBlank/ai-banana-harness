@@ -41,6 +41,8 @@ interface Fixtures {
   launch: (options?: LaunchOptions) => Promise<Launched>;
   /** Queues a plain text answer on the stub for the next turn. */
   queueAnswer: (text: string) => Promise<void>;
+  /** Replaces the stub's queue with these replies (the scenario reply format). */
+  queueReplies: (replies: unknown[]) => Promise<void>;
   /** A wrapper script that runs the real sidecar through `support/noisy-sidecar.mjs`. */
   noisySidecar: () => string;
 }
@@ -76,16 +78,20 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
     { scope: "worker" },
   ],
 
-  queueAnswer: async ({ stub }, use) => {
-    await use(async (text) => {
+  queueReplies: async ({ stub }, use) => {
+    await use(async (replies) => {
       const control = stub.stubs.baseline.control_url;
       await fetch(`${control}/reset`, { method: "POST" });
       const response = await fetch(`${control}/replies`, {
         method: "POST",
-        body: JSON.stringify([{ sse: { text } }]),
+        body: JSON.stringify(replies),
       });
       if (!response.ok) throw new Error(`queueing a reply failed: ${response.status}`);
     });
+  },
+
+  queueAnswer: async ({ queueReplies }, use) => {
+    await use((text) => queueReplies([{ sse: { text } }]));
   },
 
   noisySidecar: async ({ stub }, use) => {

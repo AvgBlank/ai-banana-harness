@@ -22,6 +22,7 @@ export function HomeScreen({
   onPickProvider,
   onOpenFolder,
   onOpenRecent,
+  onSend,
 }: {
   recent: string[];
   canOpen: boolean;
@@ -33,6 +34,7 @@ export function HomeScreen({
   onPickProvider: (id: string) => void;
   onOpenFolder: () => void;
   onOpenRecent: (path: string) => Promise<void>;
+  onSend: (text: string) => Promise<void>;
 }) {
   const { state, set } = useApp();
   return (
@@ -70,12 +72,11 @@ export function HomeScreen({
           onOpenRecent={onOpenRecent}
         />
         <Composer
-          disabled
+          disabled={needsKey || !state.workspace}
           disabledReason={
-            needsKey
-              ? "Add an API key to start a session."
-              : "Starting a session is not available yet."
+            needsKey ? "Add an API key to start a session." : "Open a workspace to start a session."
           }
+          onSend={onSend}
           provider={provider}
           onPickProvider={onPickProvider}
         />

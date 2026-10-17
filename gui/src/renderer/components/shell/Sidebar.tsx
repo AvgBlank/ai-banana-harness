@@ -48,12 +48,14 @@ export function Sidebar({
   now,
   canOpen,
   onOpenFolder,
+  onSelect,
 }: {
   appName: string;
   data: SessionsData;
   now: number;
   canOpen: boolean;
   onOpenFolder: () => void;
+  onSelect: (session: Session) => void;
 }) {
   const { state, set } = useApp();
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -156,9 +158,7 @@ export function Sidebar({
                         ) : (
                           <button
                             type="button"
-                            onClick={() =>
-                              set({ view: "session", sessionId: s.id, workspace: s.workspace })
-                            }
+                            onClick={() => onSelect(s)}
                             onDoubleClick={() => setRenaming(s.id)}
                             aria-current={active ? "true" : undefined}
                             className={cn(

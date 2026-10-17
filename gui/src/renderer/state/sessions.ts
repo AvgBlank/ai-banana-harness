@@ -13,6 +13,10 @@ export interface SessionsData {
   running: ReadonlySet<string>;
   /** The sidecar stopped while a turn ran in the session. */
   interrupted: ReadonlySet<string>;
+  /** Asks the sidecar again, e.g. after a turn starts or ends and the auto-title changed. */
+  reload(): void;
+  /** A session just created here shows at once, before the sidecar's list is read again. */
+  add(session: Session): void;
   rename(session: Session, title: string): Promise<void>;
 }
 
@@ -62,15 +66,31 @@ export function useSessions(): SessionsData {
     };
   }, [client, load]);
 
+  // Optimistic: the new title shows at once and goes back if the sidecar refuses it.
   const rename = useCallback(
     async (session: Session, title: string) => {
-      const updated = await client.renameSession(session.workspace, session.id, title);
-      setSessions((list) => list.map((s) => (s.id === updated.id ? updated : s)));
+      const previous = session.title;
+      setSessions((list) => list.map((s) => (s.id === session.id ? { ...s, title } : s)));
+      try {
+        const updated = await client.renameSession(session.workspace, session.id, title);
+        setSessions((list) => list.map((s) => (s.id === updated.id ? updated : s)));
+      } catch (error) {
+        setSessions((list) =>
+          list.map((s) => (s.id === session.id ? { ...s, title: previous } : s)),
+        );
+        throw error;
+      }
     },
     [client],
   );
+  const reload = useCallback(() => void load(1), [load]);
+  const add = useCallback(
+    (session: Session) =>
+      setSessions((list) => [session, ...list.filter((s) => s.id !== session.id)]),
+    [],
+  );
 
-  return { status, sessions, running, interrupted, rename };
+  return { status, sessions, running, interrupted, reload, add, rename };
 }
 
 /** Sessions grouped by workspace: groups by their newest session, sessions newest first. */

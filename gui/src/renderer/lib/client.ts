@@ -6,7 +6,14 @@ import type {
   Prefs,
   PrefsPatch,
 } from "../../shared/api";
-import type { MethodName, Params, ProviderOption, Result, Session } from "../../shared/protocol";
+import type {
+  EventFrame,
+  MethodName,
+  Params,
+  ProviderOption,
+  Result,
+  Session,
+} from "../../shared/protocol";
 
 /** The sidecar state main pushes, as far as the shell reads it. */
 export type SidecarStatus = { state: string };
@@ -28,6 +35,13 @@ export interface Client {
   runningSessions(): Promise<string[]>;
   renameSession(workspace: string, sessionId: string, title: string): Promise<Session>;
   providers(workspace: string): Promise<{ providers: ProviderOption[]; default: string }>;
+  createSession(workspace: string, provider?: string): Promise<Session>;
+  /** The session with its stored turns. */
+  resume(workspace: string, sessionId: string): Promise<Result<"session.resume">>;
+  startTurn(workspace: string, sessionId: string, input: string): Promise<void>;
+  cancelTurn(workspace: string, sessionId: string): Promise<void>;
+  /** Every event frame main forwards, already validated. */
+  onSidecarEvent(listener: (frame: EventFrame) => void): () => void;
   pickFolder(): Promise<string | null>;
   openWorkspace(path: string): Promise<OpenedWorkspace>;
   onSidecarState(listener: (status: SidecarStatus) => void): () => void;
@@ -51,6 +65,22 @@ export function clientFor(banana: BananaApi): Client {
     renameSession: async (workspace, session_id, title) =>
       (await call("session.rename", { workspace, session_id, title })).session,
     providers: (workspace) => call("provider.list", { workspace }),
+    createSession: async (workspace, provider) =>
+      (
+        await call("session.create", {
+          workspace,
+          ...(provider ? { provider: provider as "deepseek" | "qwen" } : {}),
+        })
+      ).session,
+    resume: (workspace, session_id) => call("session.resume", { workspace, session_id }),
+    startTurn: async (workspace, session_id, input) => {
+      await call("turn.start", { workspace, session_id, input });
+    },
+    cancelTurn: async (workspace, session_id) => {
+      await call("turn.cancel", { workspace, session_id });
+    },
+    onSidecarEvent: (listener) =>
+      banana.on("sidecarEvent", (payload) => listener(payload as EventFrame)),
     pickFolder: () => banana.workspace.pick(),
     openWorkspace: (path) => banana.workspace.open(path),
     onSidecarState: (listener) =>
