@@ -9,11 +9,23 @@ GUI := gui
 PNPM ?= pnpm
 TARGET_DIR := $(or $(CARGO_TARGET_DIR),target)
 SIDECAR_DEBUG := $(abspath $(TARGET_DIR)/debug/banana-harness)
+# The development container (docker/dev.Dockerfile): the checkout is mounted, the caches and the
+# GUI's dependencies live in named volumes, and the user is the host user. No key is passed unless
+# PASS_API_KEY=1 is set for that run. Cargo gets DEV_JOBS parallel jobs (not one per core), because
+# Docker Desktop's VM has far less memory than the Mac: parallel linking gets killed in it and the
+# GUI tests (VITEST_MAX_WORKERS) time out when every core runs one.
+DOCKER ?= docker
+DEV_JOBS ?= 2
+DEV_IMAGE ?= banana-harness-dev
+DEV_RUN = $(DOCKER) run --rm $(if $(DEV_TTY),-it,) --user "$$(id -u):$$(id -g)" \
+  -v "$(CURDIR)":/work -v banana-dev-cache:/cache -v banana-dev-gui-node-modules:/work/gui/node_modules \
+  -e CARGO_BUILD_JOBS=$(DEV_JOBS) -e VITEST_MAX_WORKERS=$(DEV_JOBS) $(if $(PASS_API_KEY),-e AI_API_KEY,) $(DEV_ENV) $(DEV_IMAGE)
 SIDECAR_RELEASE := $(abspath $(TARGET_DIR)/release/banana-harness)
 FAKE_PROVIDER_DEBUG := $(abspath $(TARGET_DIR)/debug/fake-provider)
 
 .PHONY: setup run test lint clean check-cc install-rust \
-        gui-setup gui-sidecar gui-dev gui-build gui-lint gui-test gui-e2e gui-leak-scan gui-package gui-package-smoke gui-clean gui-maybe-lint gui-maybe-test
+        gui-setup gui-sidecar gui-dev gui-build gui-lint gui-test gui-e2e gui-leak-scan gui-package gui-package-smoke gui-clean \
+        docker-image docker-lint docker-test docker-gui-e2e docker-shell docker-clean gui-maybe-lint gui-maybe-test
 
 setup: check-cc install-rust
 	$(CARGO) build --release --locked
@@ -107,6 +119,40 @@ gui-package:
 gui-package-smoke:
 	@[ "$$(uname -s)" = Darwin ] || { echo "error: gui-package-smoke runs the macOS app and only runs on macOS." >&2; exit 1; }
 	$(PNPM) --dir $(GUI) exec playwright test -c playwright.packaged.config.ts
+
+docker-preflight:
+	@command -v $(DOCKER) >/dev/null || { echo "error: $(DOCKER) is not installed; install Docker to use the docker-* targets." >&2; exit 1; }
+	@$(DOCKER) info >/dev/null 2>&1 || { echo "error: the Docker daemon is not running; start Docker Desktop (or the docker service) and try again." >&2; exit 1; }
+
+# Builds the image with the versions docker/versions.sh derives from the files that own them.
+docker-image: docker-preflight
+	@eval "$$(sh docker/versions.sh)" && $(DOCKER) build -f docker/dev.Dockerfile -t $(DEV_IMAGE) \
+	  --build-arg RUST_VERSION="$$RUST_VERSION" --build-arg NODE_VERSION="$$NODE_VERSION" \
+	  --build-arg PNPM_VERSION="$$PNPM_VERSION" docker
+
+docker-lint: docker-image
+	$(DEV_RUN) sh -c 'make gui-setup && make lint'
+
+docker-test: docker-image
+	$(DEV_RUN) sh -c 'make gui-setup && make test'
+
+# The end-to-end suite under Xvfb; Chromium's sandbox cannot start in a container, so CI=1 adds --no-sandbox.
+docker-gui-e2e: docker-image
+	$(MAKE) DEV_ENV="-e CI=1" _docker-gui-e2e
+
+_docker-gui-e2e:
+	$(DEV_RUN) sh -c 'make gui-setup && make gui-e2e'
+
+docker-shell: docker-image
+	$(MAKE) DEV_TTY=1 _docker-shell
+
+_docker-shell:
+	$(DEV_RUN) bash
+
+# Removes the image and the volumes (the next run downloads and builds everything again).
+docker-clean: docker-preflight
+	-$(DOCKER) volume rm banana-dev-cache banana-dev-gui-node-modules
+	-$(DOCKER) image rm $(DEV_IMAGE)
 
 gui-clean:
 	rm -rf $(GUI)/out $(GUI)/dist $(GUI)/build/sidecar $(GUI)/test-results $(GUI)/playwright-report

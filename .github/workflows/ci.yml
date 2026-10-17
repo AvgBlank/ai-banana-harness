@@ -31,6 +31,17 @@ jobs:
       # Without AI_API_KEY, `make test` runs the offline suite and skips the live smoke.
       - run: make test
 
+  # The development container: the image builds, and the repository's lint passes inside it.
+  dev-container:
+    name: development container
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DEV_JOBS: "4"
+    steps:
+      - uses: actions/checkout@v4
+      - run: make docker-lint
+
   gui:
     name: desktop app (${{ matrix.os }})
     strategy:

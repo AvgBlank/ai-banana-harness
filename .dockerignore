@@ -1,0 +1,3 @@
+# The image build needs nothing from the repository: the checkout is mounted when it runs.
+*
+!docker/

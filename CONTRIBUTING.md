@@ -18,6 +18,23 @@ make run     # the TUI (needs AI_API_KEY for a real run)
 The desktop app is optional: it needs Node 24 and pnpm (`make gui-setup`), and `make gui-dev`
 runs it. See `gui/AGENTS.md` for its rules.
 
+## Development container
+
+With only Docker installed, `make docker-lint`, `make docker-test` and `make docker-gui-e2e` run the
+repository's checks in a pinned Linux image (Rust from `rust-toolchain.toml`, Node 24.22.0, pnpm from
+`gui/package.json`, Xvfb and Electron's libraries), the way CI's Linux jobs do. `make docker-shell`
+opens a shell in it and `make docker-clean` removes the image and its volumes.
+
+- The checkout is mounted read-write and the container runs as your user. Cargo's registry, `target/`
+  and the pnpm store live in the named volume `banana-dev-cache`, and `gui/node_modules` in a second
+  volume, so nothing for the container's system lands in your checkout.
+- No key is passed. `PASS_API_KEY=1 make docker-test` passes your `AI_API_KEY` for that run only.
+- Docker Desktop's VM usually has much less memory than the Mac. `DEV_JOBS` (default 2) caps cargo's
+  and the GUI tests' parallelism; with less than about 4 GiB, raise the VM's memory or lower it to 1.
+- The versions come from `docker/versions.sh`, which fails when Node disagrees with `gui/.node-version`
+  or the `engines` floor in `gui/package.json`. The Electron app itself is not run in the container;
+  macOS packaging stays on macOS.
+
 ## Layout
 
 ```
