@@ -68,4 +68,14 @@ describe("clipOutput", () => {
     expect(new TextEncoder().encode(clip.text).length).toBeLessThanOrEqual(MAX_OUTPUT_BYTES);
     expect(clipOutput("a".repeat(MAX_OUTPUT_BYTES)).clipped).toBe(false);
   });
+
+  test("the cut keeps the longest prefix that fits, whatever the characters (a split emoji is kept as before)", () => {
+    for (const unit of ["é", "€", "😀", "a😀é"]) {
+      const clip = clipOutput(`a${unit.repeat(MAX_OUTPUT_BYTES)}`);
+      const bytes = new TextEncoder().encode(clip.text).length;
+      expect(bytes).toBeLessThanOrEqual(MAX_OUTPUT_BYTES);
+      // The next character would not have fit: at most 4 bytes are left over.
+      expect(bytes).toBeGreaterThan(MAX_OUTPUT_BYTES - 4);
+    }
+  });
 });

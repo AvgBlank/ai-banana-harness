@@ -13,10 +13,16 @@ export function clipOutput(output: string): ClippedOutput {
   let clipped = lines.length > MAX_OUTPUT_LINES;
   const encoder = new TextEncoder();
   if (encoder.encode(text).length > MAX_OUTPUT_BYTES) {
-    // Cut on a character boundary at or below the byte limit.
-    let end = Math.min(text.length, MAX_OUTPUT_BYTES);
-    while (end > 0 && encoder.encode(text.slice(0, end)).length > MAX_OUTPUT_BYTES) end--;
-    text = text.slice(0, end);
+    // Cut at the longest prefix within the byte limit. ponytail: an emoji can be split into a lone surrogate; cut on code points to fix.
+    // Binary search: the encoded size only grows with the length, and a scan costs quadratic time.
+    let low = 0;
+    let high = Math.min(text.length, MAX_OUTPUT_BYTES);
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2);
+      if (encoder.encode(text.slice(0, middle)).length <= MAX_OUTPUT_BYTES) low = middle;
+      else high = middle - 1;
+    }
+    text = text.slice(0, low);
     clipped = true;
   }
   return { text, clipped };
