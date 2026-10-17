@@ -1,11 +1,13 @@
 //! An in-process client: the bridge served over `tokio::io::duplex`, driven by frames.
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used)]
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use harness_bridge::{BridgeOptions, serve};
 use harness_core::{Config, Harness, HarnessOptions, Provider, Store};
+use harness_testkit::{FakeProvider, Scenario, TestEnv, TestEnvOptions};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream};
@@ -88,13 +90,22 @@ impl Client {
 
     pub async fn try_next(&mut self) -> Option<Value> {
         let mut line = String::new();
-        let n = tokio::time::timeout(
+        let read = tokio::time::timeout(
             Duration::from_secs(10),
             self.from_server.read_line(&mut line),
         )
-        .await
-        .expect("no frame within 10 s")
-        .unwrap();
+        .await;
+        let Ok(read) = read else {
+            let tail: Vec<String> = self
+                .log
+                .iter()
+                .rev()
+                .take(6)
+                .map(|f| f.to_string().chars().take(200).collect())
+                .collect();
+            panic!("no frame within 10 s; the last frames, newest first: {tail:#?}");
+        };
+        let n = read.unwrap();
         if n == 0 {
             return None;
         }
@@ -184,5 +195,139 @@ pub fn normalise_sessions(frame: &mut Value, base: &Path) {
             .unwrap()
             .replace(&base, "<base>");
         session["workspace"] = json!(workspace);
+    }
+}
+
+impl harness_testkit::Transport for Client {
+    async fn send(&mut self, frame: Value) -> anyhow::Result<()> {
+        self.send_line(&frame.to_string()).await;
+        Ok(())
+    }
+
+    async fn next(&mut self) -> anyhow::Result<Value> {
+        self.try_next()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("the server closed the stream"))
+    }
+}
+
+pub struct Run {
+    pub client: Client,
+    pub env: TestEnv,
+    pub stub: FakeProvider,
+    /// Events that arrived while a call waited for its response, not yet looked at.
+    pub stash: std::collections::VecDeque<Value>,
+}
+
+pub fn scenario(name: &str) -> Scenario {
+    Scenario::load(
+        &Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../harness-testkit/scenarios")
+            .join(format!("{name}.json")),
+    )
+    .unwrap()
+}
+
+impl Run {
+    /// A bridge whose user config sends both providers to a fresh stub, over a copy of the
+    /// scenario's workspace. The stub is left unscripted.
+    pub async fn new(workspace_template: &Path) -> Self {
+        let stub = FakeProvider::start().await;
+        let env = TestEnv::new(&TestEnvOptions {
+            workspace_template: Some(workspace_template),
+            stubs: BTreeMap::from([("baseline".to_string(), stub.base_url.clone())]),
+        })
+        .unwrap();
+        let user_config: PathBuf =
+            Path::new(&env.vars()["XDG_CONFIG_HOME"]).join("banana-harness/config.toml");
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("harness.db");
+        let mut client = Client::start_at(dir, db_path, API_KEY, 1 << 16, Some(user_config));
+        client.next().await;
+        Self {
+            client,
+            env,
+            stub,
+            stash: std::collections::VecDeque::new(),
+        }
+    }
+
+    pub async fn for_scenario(name: &str) -> (Self, Scenario) {
+        let scenario = scenario(name);
+        let run = Self::new(&scenario.workspace_template()).await;
+        scenario.script(&run.stub).unwrap();
+        (run, scenario)
+    }
+
+    pub fn workspace(&self) -> String {
+        self.env.workspace().display().to_string()
+    }
+
+    pub async fn call(&mut self, method: &str, params: Value) -> Value {
+        // Events may arrive first; the response is the frame with this call's id.
+        self.client.send("c", method, params).await;
+        loop {
+            let frame = self.client.next().await;
+            if frame["kind"] == "response" {
+                return frame;
+            }
+            self.stash.push_back(frame);
+        }
+    }
+
+    pub async fn open_and_create(&mut self) -> String {
+        let workspace = self.workspace();
+        self.call("workspace.open", json!({"path": workspace}))
+            .await;
+        let created = self
+            .call("session.create", json!({"workspace": workspace}))
+            .await;
+        created["result"]["session"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
+    pub async fn start_turn(&mut self, session: &str, input: &str) -> Value {
+        let workspace = self.workspace();
+        self.call(
+            "turn.start",
+            json!({"workspace": workspace, "session_id": session, "input": input}),
+        )
+        .await
+    }
+
+    /// Reads frames until an event of this type; returns its frame.
+    pub async fn event(&mut self, event_type: &str) -> Value {
+        loop {
+            let frame = match self.stash.pop_front() {
+                Some(frame) => frame,
+                None => self.client.next().await,
+            };
+            if frame["kind"] == "event" && frame["event"]["type"] == event_type {
+                return frame;
+            }
+        }
+    }
+
+    /// Waits until the provider has received `count` requests, so a cancel lands mid-request.
+    pub async fn wait_for_requests(&self, count: usize) {
+        for _ in 0..500 {
+            if self.stub.requests().len() >= count {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("the provider never got request {count}");
+    }
+
+    pub async fn done_state(&mut self) -> String {
+        let frame = self.event("turn.done").await;
+        frame["event"]["state"].as_str().unwrap().to_string()
+    }
+
+    pub async fn active_turn(&mut self) -> Value {
+        let listed = self.call("workspace.list", json!({})).await;
+        listed["result"]["workspaces"][0]["active_turn"].clone()
     }
 }

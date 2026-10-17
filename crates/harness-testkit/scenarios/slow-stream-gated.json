@@ -25,6 +25,13 @@
     }
   ],
   "expect": {
+    "events": [
+      "turn.created",
+      "model.message",
+      "model.message.delta",
+      "model.message",
+      "turn.done"
+    ],
     "requests": 1,
     "ui": [
       "A slow answer."

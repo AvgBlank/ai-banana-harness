@@ -5,11 +5,12 @@ use std::path::Path;
 
 use harness_testkit::{FakeProvider, Scenario, Step, TestEnv, TestEnvOptions};
 
-const EXPECTED: [&str; 10] = [
+const EXPECTED: [&str; 11] = [
     "bash-and-test",
     "edit-and-approve",
     "edit-and-undo",
     "key-never-leaks",
+    "kill-mid-turn",
     "plain-answer",
     "provider-abort-midstream",
     "provider-error-401",

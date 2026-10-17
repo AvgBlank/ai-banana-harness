@@ -16,6 +16,10 @@
     }
   ],
   "expect": {
+    "events": [
+      "turn.created",
+      "turn.done"
+    ],
     "requests": 1
   }
 }

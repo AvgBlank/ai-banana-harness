@@ -23,7 +23,7 @@
             "id": "call_2",
             "name": "bash",
             "arguments": {
-              "command": "git push origin main"
+              "command": "touch deployed.txt"
             }
           }
         ]
@@ -37,7 +37,7 @@
   ],
   "steps": [
     {
-      "send": "write a note and push it"
+      "send": "write a note and deploy it"
     },
     {
       "approve": "allow"
@@ -50,6 +50,23 @@
     }
   ],
   "expect": {
+    "events": [
+      "turn.created",
+      "model.message",
+      "model.message",
+      "tool.call",
+      "tool.approval_required",
+      "tool.response",
+      "model.message",
+      "model.message",
+      "tool.call",
+      "tool.approval_required",
+      "tool.response",
+      "model.message",
+      "model.message.delta",
+      "model.message",
+      "turn.done"
+    ],
     "requests": 3,
     "request_contains": [
       {

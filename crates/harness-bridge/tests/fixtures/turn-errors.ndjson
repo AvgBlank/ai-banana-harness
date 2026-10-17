@@ -1,0 +1,17 @@
+{"scenario":"turn-errors"}
+{"id":"c","kind":"request","method":"workspace.open","params":{"path":"<workspace>"}}
+{"id":"c","kind":"response","ok":true,"result":{"already_open":false,"provider":"deepseek","workspace":"<workspace>","workspace_config":{"loaded":false,"path":"<workspace>/.banana-harness/config.toml","present":false}}}
+{"id":"c","kind":"request","method":"session.create","params":{"workspace":"<workspace>"}}
+{"id":"c","kind":"response","ok":true,"result":{"session":{"created_at":"<time>","id":"<id-0>","model":"deepseek-flash","provider":"deepseek","title":null,"updated_at":"<time>","workspace":"<workspace>"}}}
+{"id":"c","kind":"request","method":"turn.start","params":{"input":"slow one","session_id":"<id-0>","workspace":"<workspace>"}}
+{"id":"c","kind":"response","ok":true,"result":{}}
+{"event":{"id":"<id-1>","session_id":"<id-0>","turn_id":"<id-2>","type":"turn.created"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"id":"c","kind":"request","method":"turn.start","params":{"input":"overlapping","session_id":"<id-0>","workspace":"<workspace>"}}
+{"error":{"code":"turn_in_progress","data":{"session_id":"<id-0>"},"message":"a turn is already running in this workspace"},"id":"c","kind":"response","ok":false}
+{"id":"c","kind":"request","method":"action.reply","params":{"action_id":"nope","answer":"allow","session_id":"<id-0>","workspace":"<workspace>"}}
+{"error":{"code":"unknown_action","message":"action nope is not waiting for an answer"},"id":"c","kind":"response","ok":false}
+{"id":"c","kind":"request","method":"session.undo","params":{"session_id":"<id-0>","workspace":"<workspace>"}}
+{"error":{"code":"turn_in_progress","data":{"session_id":"<id-0>"},"message":"a turn is already running in this workspace"},"id":"c","kind":"response","ok":false}
+{"id":"c","kind":"request","method":"turn.cancel","params":{"session_id":"<id-0>","workspace":"<workspace>"}}
+{"id":"c","kind":"response","ok":true,"result":{"cancelled":true}}
+{"event":{"id":"<id-3>","state":"cancelled","type":"turn.done"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}

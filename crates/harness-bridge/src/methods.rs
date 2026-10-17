@@ -3,12 +3,14 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use harness_core::{Provider, Redactor, Store};
+use harness_core::{Answer, Provider, Redactor, Store};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
+use tokio::sync::mpsc;
 
-use crate::frame::BridgeError;
+use crate::frame::{BridgeError, Line};
+use crate::turns::Forwarders;
 use crate::workspaces::{OpenEnvironment, OpenRequest, OpenWorkspace, Workspaces};
 
 pub(crate) struct Context {
@@ -18,6 +20,20 @@ pub(crate) struct Context {
     pub(crate) db_path: PathBuf,
     pub(crate) user_config: Option<PathBuf>,
     pub(crate) api_key: String,
+    pub(crate) forwarders: Forwarders,
+}
+
+impl Context {
+    /// Cancels every turn, waits for their closing frames, then stops the forwarding tasks.
+    pub(crate) async fn shutdown_turns(&self) {
+        self.workspaces.stop_turns().await;
+        let mut forwarders = self
+            .forwarders
+            .lock()
+            .map(|mut set| std::mem::take(&mut *set))
+            .unwrap_or_default();
+        forwarders.abort_all();
+    }
 }
 
 fn params<T: DeserializeOwned>(map: Map<String, Value>) -> Result<T, BridgeError> {
@@ -58,6 +74,21 @@ struct SessionParams {
 }
 
 #[derive(Deserialize)]
+struct TurnStartParams {
+    workspace: String,
+    session_id: String,
+    input: String,
+}
+
+#[derive(Deserialize)]
+struct ReplyParams {
+    workspace: String,
+    session_id: String,
+    action_id: String,
+    answer: Answer,
+}
+
+#[derive(Deserialize)]
 struct OpenParams {
     path: String,
     #[serde(default)]
@@ -89,6 +120,7 @@ pub(crate) async fn dispatch(
     context: &Context,
     method: &str,
     map: Map<String, Value>,
+    tx: &mpsc::Sender<Line>,
 ) -> Result<Value, BridgeError> {
     match method {
         "shutdown" => Ok(json!({})),
@@ -100,16 +132,18 @@ pub(crate) async fn dispatch(
         "workspace.open" => open(context, params(map)?).await,
         "workspace.close" => {
             let p: WorkspaceParams = params(map)?;
-            context.workspaces.close(&p.workspace)?;
+            context.workspaces.close(&p.workspace).await?;
             Ok(json!({}))
         }
         "workspace.list" => {
-            let workspaces: Vec<Value> = context
-                .workspaces
-                .list()?
-                .iter()
-                .map(|w| json!({"workspace": w.path, "provider": w.provider, "active_turn": null}))
-                .collect();
+            let mut workspaces = Vec::new();
+            for w in context.workspaces.list()? {
+                workspaces.push(json!({
+                    "workspace": w.path,
+                    "provider": w.provider,
+                    "active_turn": w.turns.summary().await,
+                }));
+            }
             Ok(json!({ "workspaces": workspaces }))
         }
         "provider.list" => {
@@ -176,6 +210,55 @@ pub(crate) async fn dispatch(
             session_in(&workspace, &p.session_id).await?;
             let changes = blocking(move || workspace.harness.turn_changes(&p.session_id)).await?;
             Ok(json!(changes))
+        }
+        "turn.start" => {
+            let p: TurnStartParams = params(map)?;
+            if p.input.trim().is_empty() {
+                return Err(BridgeError::InvalidParams(
+                    "`input` must not be empty".into(),
+                ));
+            }
+            let workspace = context.workspaces.get(&p.workspace)?;
+            session_in(&workspace, &p.session_id).await?;
+            workspace
+                .turns
+                .start(
+                    &workspace.harness,
+                    &workspace.path,
+                    &p.session_id,
+                    p.input,
+                    tx.clone(),
+                    &context.forwarders,
+                )
+                .await?;
+            Ok(json!({}))
+        }
+        "turn.cancel" => {
+            let p: SessionParams = params(map)?;
+            let workspace = context.workspaces.get(&p.workspace)?;
+            Ok(json!({"cancelled": workspace.turns.cancel(&p.session_id).await}))
+        }
+        "action.reply" => {
+            let p: ReplyParams = params(map)?;
+            let workspace = context.workspaces.get(&p.workspace)?;
+            workspace
+                .turns
+                .reply(&p.session_id, &p.action_id, p.answer)
+                .await?;
+            Ok(json!({}))
+        }
+        "session.undo" => {
+            let p: SessionParams = params(map)?;
+            let workspace = context.workspaces.get(&p.workspace)?;
+            session_in(&workspace, &p.session_id).await?;
+            workspace.turns.begin_undo(&p.session_id).await?;
+            let report = blocking({
+                let workspace = Arc::clone(&workspace);
+                move || workspace.harness.undo(&p.session_id)
+            })
+            .await;
+            workspace.turns.end_undo().await;
+            Ok(json!(report?))
         }
         other => Err(BridgeError::UnknownMethod(other.to_string())),
     }

@@ -1,0 +1,1 @@
+{"event":{"id":"<id-0>","server":"docs","thread_id":"<id-1>","type":"mcp.auth_required","url":"https://auth.example.com/authorize"},"kind":"event","session_id":"<id-2>","turn_id":"<id-3>","workspace":"<workspace>"}

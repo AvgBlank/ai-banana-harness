@@ -33,6 +33,18 @@
     }
   ],
   "expect": {
+    "events": [
+      "turn.created",
+      "model.message",
+      "model.message",
+      "tool.call",
+      "tool.response_required",
+      "tool.response",
+      "model.message",
+      "model.message.delta",
+      "model.message",
+      "turn.done"
+    ],
     "requests": 2,
     "request_contains": [
       {

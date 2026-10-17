@@ -18,6 +18,12 @@
     }
   ],
   "expect": {
+    "events": [
+      "turn.created",
+      "model.message",
+      "model.message.delta",
+      "turn.done"
+    ],
     "requests": 1
   }
 }

@@ -118,7 +118,10 @@ impl TestEnv {
             std::fs::write(
                 app_config.join("config.toml"),
                 format!(
-                    "[providers.deepseek]\nbase_url = \"{url}\"\n\n[providers.qwen]\nbase_url = \"{url}\"\n"
+                    "[providers.deepseek]\nbase_url = \"{url}\"\n\n[providers.qwen]\nbase_url = \"{url}\"\n\n\
+                     # Edits and commands ask, so scenarios can exercise approvals; the product default\n\
+                     # allows both. Deny rules (such as `git push*`) stay in force.\n\
+                     [permission]\nedit = \"ask\"\n\n[permission.bash]\n\"*\" = \"ask\"\n"
                 ),
             )
             .context("writing the user config")?;

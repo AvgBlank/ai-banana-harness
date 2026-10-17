@@ -1,0 +1,32 @@
+{
+  "name": "kill-mid-turn",
+  "workspace": "hello-repo",
+  "replies": [
+    {
+      "sse": {
+        "text": "A slow answer."
+      },
+      "gate": "never",
+      "gate_after_parts": 2
+    }
+  ],
+  "steps": [
+    {
+      "send": "answer slowly"
+    },
+    {
+      "wait_for": "model.message.delta"
+    },
+    {
+      "kill_sidecar": true
+    }
+  ],
+  "expect": {
+    "events": [
+      "turn.created",
+      "model.message",
+      "model.message.delta"
+    ],
+    "requests": 1
+  }
+}

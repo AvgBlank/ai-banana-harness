@@ -20,6 +20,12 @@ pub(crate) enum BridgeError {
     WorkspaceMismatch(String),
     #[error("session {0} not found")]
     SessionNotFound(String),
+    #[error("a turn is already running in this workspace")]
+    TurnInProgress { session_id: String },
+    #[error("no turn is running in this workspace")]
+    NoActiveTurn,
+    #[error("action {0} is not waiting for an answer")]
+    UnknownAction(String),
     #[error("AI_API_KEY is not set; the workspace cannot be opened")]
     ApiKeyMissing,
     #[error("{0:#}")]
@@ -36,8 +42,21 @@ impl BridgeError {
             Self::WorkspaceNotOpen(_) => "workspace_not_open",
             Self::WorkspaceMismatch(_) => "workspace_mismatch",
             Self::SessionNotFound(_) => "session_not_found",
+            Self::TurnInProgress { .. } => "turn_in_progress",
+            Self::NoActiveTurn => "no_active_turn",
+            Self::UnknownAction(_) => "unknown_action",
             Self::ApiKeyMissing => "api_key_missing",
             Self::Internal(_) => "internal",
+        }
+    }
+}
+
+impl BridgeError {
+    /// Structured detail for the error response, when the code has any.
+    pub(crate) fn data(&self) -> Option<Value> {
+        match self {
+            Self::TurnInProgress { session_id } => Some(json!({ "session_id": session_id })),
+            _ => None,
         }
     }
 }
@@ -136,10 +155,24 @@ pub(crate) fn ok(id: &str, result: Value) -> Line {
 }
 
 /// An error response; `message` has already been redacted.
-pub(crate) fn error(id: Option<&str>, code: &str, message: &str) -> Line {
+pub(crate) fn error(id: Option<&str>, code: &str, message: &str, data: Option<Value>) -> Line {
+    let mut error = json!({"code": code, "message": message});
+    if let Some(data) = data {
+        error["data"] = data;
+    }
+    to_line(&json!({"kind": "response", "id": id, "ok": false, "error": error}))
+}
+
+/// A core event with its routing: `turn_id` is `None` only before `turn.created`.
+pub(crate) fn event(
+    workspace: &str,
+    session_id: &str,
+    turn_id: Option<&str>,
+    event: &harness_core::Event,
+) -> Line {
     to_line(&json!({
-        "kind": "response", "id": id, "ok": false,
-        "error": {"code": code, "message": message},
+        "kind": "event", "workspace": workspace, "session_id": session_id,
+        "turn_id": turn_id, "event": event,
     }))
 }
 

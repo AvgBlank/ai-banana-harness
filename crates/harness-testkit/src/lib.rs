@@ -8,10 +8,12 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 mod control;
+mod driver;
 mod env;
 mod scenario;
 mod stub;
 
+pub use driver::{Outcome, Transport, run as run_scenario};
 pub use env::{KeySetup, TestEnv, TestEnvOptions};
 pub use scenario::{Approval, Expect, RequestContains, Scenario, Step};
 pub use stub::{

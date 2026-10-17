@@ -64,6 +64,7 @@ where
         db_path: options.db_path.clone(),
         user_config: options.user_config.clone(),
         api_key: options.api_key.clone(),
+        forwarders: std::sync::Mutex::new(JoinSet::new()),
     });
     let ready = frame::ready(
         APP_NAME,
@@ -101,7 +102,7 @@ where
             Incoming::TooLong => {
                 let message = format!("line is longer than {MAX_LINE_BYTES} bytes");
                 let _ = tx
-                    .send(frame::error(None, "invalid_request", &message))
+                    .send(frame::error(None, "invalid_request", &message, None))
                     .await;
                 continue;
             }
@@ -110,7 +111,7 @@ where
                 Err((id, e)) => {
                     log(&format!("bridge: rejected a frame: {}", e.code()));
                     let _ = tx
-                        .send(frame::error(id.as_deref(), e.code(), &e.to_string()))
+                        .send(frame::error(id.as_deref(), e.code(), &e.to_string(), None))
                         .await;
                     continue;
                 }
@@ -125,6 +126,7 @@ where
                     Some(&request.id),
                     "invalid_request",
                     "request id is already in flight",
+                    None,
                 ))
                 .await;
             continue;
@@ -141,6 +143,7 @@ where
     // Let started requests answer, then flush every queued frame before returning.
     let _ = tokio::time::timeout(DRAIN, async { while tasks.join_next().await.is_some() {} }).await;
     tasks.abort_all();
+    context.shutdown_turns().await;
     drop(tx);
     let _ = writer_task.await;
     Ok(())
@@ -154,7 +157,7 @@ async fn handle(
     exit: mpsc::Sender<()>,
 ) {
     let stopping = request.method == "shutdown";
-    let outcome = methods::dispatch(&context, &request.method, request.params).await;
+    let outcome = methods::dispatch(&context, &request.method, request.params, &tx).await;
     let line = match outcome {
         Ok(result) => frame::ok(&request.id, result),
         Err(e) => {
@@ -166,7 +169,7 @@ async fn handle(
                 request.id,
                 e.code()
             )));
-            frame::error(Some(&request.id), e.code(), &message)
+            frame::error(Some(&request.id), e.code(), &message, e.data())
         }
     };
     let _ = tx.send(line).await;

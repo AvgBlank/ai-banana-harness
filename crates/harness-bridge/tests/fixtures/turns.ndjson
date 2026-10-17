@@ -1,0 +1,141 @@
+{"scenario":"plain-answer"}
+{"id":"d1","kind":"request","method":"workspace.open","params":{"path":"<workspace>"}}
+{"id":"d1","kind":"response","ok":true,"result":{"already_open":false,"provider":"deepseek","workspace":"<workspace>","workspace_config":{"loaded":false,"path":"<workspace>/.banana-harness/config.toml","present":false}}}
+{"id":"d2","kind":"request","method":"session.create","params":{"workspace":"<workspace>"}}
+{"id":"d2","kind":"response","ok":true,"result":{"session":{"created_at":"<time>","id":"<id-0>","model":"deepseek-flash","provider":"deepseek","title":null,"updated_at":"<time>","workspace":"<workspace>"}}}
+{"id":"d3","kind":"request","method":"turn.start","params":{"input":"say hi","session_id":"<id-0>","workspace":"<workspace>"}}
+{"id":"d3","kind":"response","ok":true,"result":{}}
+{"event":{"id":"<id-1>","session_id":"<id-0>","turn_id":"<id-2>","type":"turn.created"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-3>","message_id":"<id-4>","thread_id":"<id-5>","type":"model.message"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"content":"Hello","id":"<id-6>","message_id":"<id-4>","thread_id":"<id-5>","type":"model.message.delta"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"content":" there!","id":"<id-7>","message_id":"<id-4>","thread_id":"<id-5>","type":"model.message.delta"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-8>","message":{"content":"Hello there!","finish_reason":"stop","usage":{"completion_tokens":3,"prompt_tokens":21,"total_tokens":24}},"message_id":"<id-4>","thread_id":"<id-5>","type":"model.message"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-9>","state":"done","type":"turn.done"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"scenario":"edit-and-approve"}
+{"id":"d1","kind":"request","method":"workspace.open","params":{"path":"<workspace>"}}
+{"id":"d1","kind":"response","ok":true,"result":{"already_open":false,"provider":"deepseek","workspace":"<workspace>","workspace_config":{"loaded":false,"path":"<workspace>/.banana-harness/config.toml","present":false}}}
+{"id":"d2","kind":"request","method":"session.create","params":{"workspace":"<workspace>"}}
+{"id":"d2","kind":"response","ok":true,"result":{"session":{"created_at":"<time>","id":"<id-0>","model":"deepseek-flash","provider":"deepseek","title":null,"updated_at":"<time>","workspace":"<workspace>"}}}
+{"id":"d3","kind":"request","method":"turn.start","params":{"input":"write a note and deploy it","session_id":"<id-0>","workspace":"<workspace>"}}
+{"id":"d3","kind":"response","ok":true,"result":{}}
+{"event":{"id":"<id-1>","session_id":"<id-0>","turn_id":"<id-2>","type":"turn.created"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-3>","message_id":"<id-4>","thread_id":"<id-5>","type":"model.message"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-6>","message":{"content":"","finish_reason":"tool_calls","usage":{"completion_tokens":5,"prompt_tokens":10,"total_tokens":15}},"message_id":"<id-4>","thread_id":"<id-5>","type":"model.message"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"arguments":"{\"content\":\"hi\\n\",\"path\":\"NOTES.md\"}","id":"<id-7>","name":"write_file","thread_id":"<id-5>","tool_call_id":"call_1","type":"tool.call"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"action_id":"<id-8>","arguments":"{\"content\":\"hi\\n\",\"path\":\"NOTES.md\"}","id":"<id-9>","name":"write_file","rule":"edit rule \"*\" requires approval","thread_id":"<id-5>","tool_call_id":"call_1","type":"tool.approval_required"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"id":"d4","kind":"request","method":"action.reply","params":{"action_id":"<id-8>","answer":"allow","session_id":"<id-0>","workspace":"<workspace>"}}
+{"id":"d4","kind":"response","ok":true,"result":{}}
+{"event":{"blocked":false,"content":"Created NOTES.md (3 bytes)","diff":"--- before\n+++ after\n@@ -0,0 +1 @@\n+hi\n","id":"<id-10>","thread_id":"<id-5>","tool_call_id":"call_1","type":"tool.response"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-11>","message_id":"<id-12>","thread_id":"<id-5>","type":"model.message"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-13>","message":{"content":"","finish_reason":"tool_calls","usage":{"completion_tokens":5,"prompt_tokens":10,"total_tokens":15}},"message_id":"<id-12>","thread_id":"<id-5>","type":"model.message"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"arguments":"{\"command\":\"touch deployed.txt\"}","id":"<id-14>","name":"bash","thread_id":"<id-5>","tool_call_id":"call_2","type":"tool.call"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"action_id":"<id-15>","arguments":"{\"command\":\"touch deployed.txt\"}","id":"<id-16>","name":"bash","rule":"bash rule \"*\" requires approval","thread_id":"<id-5>","tool_call_id":"call_2","type":"tool.approval_required"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"id":"d5","kind":"request","method":"action.reply","params":{"action_id":"<id-15>","answer":"deny","session_id":"<id-0>","workspace":"<workspace>"}}
+{"id":"d5","kind":"response","ok":true,"result":{}}
+{"event":{"blocked":true,"content":"User denied tool call: bash rule \"*\" requires approval","id":"<id-17>","thread_id":"<id-5>","tool_call_id":"call_2","type":"tool.response"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-18>","message_id":"<id-19>","thread_id":"<id-5>","type":"model.message"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"content":"Done. I wrote NOTES.md.","id":"<id-20>","message_id":"<id-19>","thread_id":"<id-5>","type":"model.message.delta"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-21>","message":{"content":"Done. I wrote NOTES.md.","finish_reason":"stop","usage":{"completion_tokens":5,"prompt_tokens":10,"total_tokens":15}},"message_id":"<id-19>","thread_id":"<id-5>","type":"model.message"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-22>","state":"done","type":"turn.done"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"scenario":"question-and-answer"}
+{"id":"d1","kind":"request","method":"workspace.open","params":{"path":"<workspace>"}}
+{"id":"d1","kind":"response","ok":true,"result":{"already_open":false,"provider":"deepseek","workspace":"<workspace>","workspace_config":{"loaded":false,"path":"<workspace>/.banana-harness/config.toml","present":false}}}
+{"id":"d2","kind":"request","method":"session.create","params":{"workspace":"<workspace>"}}
+{"id":"d2","kind":"response","ok":true,"result":{"session":{"created_at":"<time>","id":"<id-0>","model":"deepseek-flash","provider":"deepseek","title":null,"updated_at":"<time>","workspace":"<workspace>"}}}
+{"id":"d3","kind":"request","method":"turn.start","params":{"input":"greet me","session_id":"<id-0>","workspace":"<workspace>"}}
+{"id":"d3","kind":"response","ok":true,"result":{}}
+{"event":{"id":"<id-1>","session_id":"<id-0>","turn_id":"<id-2>","type":"turn.created"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-3>","message_id":"<id-4>","thread_id":"<id-5>","type":"model.message"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-6>","message":{"content":"","finish_reason":"tool_calls","usage":{"completion_tokens":5,"prompt_tokens":10,"total_tokens":15}},"message_id":"<id-4>","thread_id":"<id-5>","type":"model.message"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"arguments":"{\"question\":\"What is your name?\"}","id":"<id-7>","name":"ask_question","thread_id":"<id-5>","tool_call_id":"call_1","type":"tool.call"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"action_id":"<id-8>","id":"<id-9>","options":[],"question":"What is your name?","thread_id":"<id-5>","type":"tool.response_required"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"id":"d4","kind":"request","method":"action.reply","params":{"action_id":"<id-8>","answer":{"text":"Ada"},"session_id":"<id-0>","workspace":"<workspace>"}}
+{"id":"d4","kind":"response","ok":true,"result":{}}
+{"event":{"blocked":false,"content":"Ada","id":"<id-10>","thread_id":"<id-5>","tool_call_id":"call_1","type":"tool.response"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-11>","message_id":"<id-12>","thread_id":"<id-5>","type":"model.message"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"content":"Nice to meet you, Ada.","id":"<id-13>","message_id":"<id-12>","thread_id":"<id-5>","type":"model.message.delta"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-14>","message":{"content":"Nice to meet you, Ada.","finish_reason":"stop","usage":{"completion_tokens":5,"prompt_tokens":10,"total_tokens":15}},"message_id":"<id-12>","thread_id":"<id-5>","type":"model.message"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-15>","state":"done","type":"turn.done"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"scenario":"subagents"}
+{"id":"d1","kind":"request","method":"workspace.open","params":{"path":"<workspace>"}}
+{"id":"d1","kind":"response","ok":true,"result":{"already_open":false,"provider":"deepseek","workspace":"<workspace>","workspace_config":{"loaded":false,"path":"<workspace>/.banana-harness/config.toml","present":false}}}
+{"id":"d2","kind":"request","method":"session.create","params":{"workspace":"<workspace>"}}
+{"id":"d2","kind":"response","ok":true,"result":{"session":{"created_at":"<time>","id":"<id-0>","model":"deepseek-flash","provider":"deepseek","title":null,"updated_at":"<time>","workspace":"<workspace>"}}}
+{"id":"d3","kind":"request","method":"turn.start","params":{"input":"split the work","session_id":"<id-0>","workspace":"<workspace>"}}
+{"id":"d3","kind":"response","ok":true,"result":{}}
+{"event":{"id":"<id-1>","session_id":"<id-0>","turn_id":"<id-2>","type":"turn.created"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-3>","message_id":"<id-4>","thread_id":"<id-5>","type":"model.message"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-6>","message":{"content":"","finish_reason":"tool_calls","usage":{"completion_tokens":5,"prompt_tokens":10,"total_tokens":15}},"message_id":"<id-4>","thread_id":"<id-5>","type":"model.message"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"arguments":"{\"input\":\"task-alpha: say alpha\",\"name\":\"alpha\"}","id":"<id-7>","name":"create_sub_agent","thread_id":"<id-5>","tool_call_id":"call_a","type":"tool.call"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"arguments":"{\"input\":\"task-beta: say beta\",\"name\":\"beta\"}","id":"<id-8>","name":"create_sub_agent","thread_id":"<id-5>","tool_call_id":"call_b","type":"tool.call"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-9>","parent":"<id-5>","thread_id":"<id-10>","title":"alpha","type":"thread.created"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-11>","parent":"<id-5>","thread_id":"<id-12>","title":"beta","type":"thread.created"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-13>","message_id":"<id-14>","thread_id":"<id-10>","type":"model.message"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-15>","message_id":"<id-16>","thread_id":"<id-12>","type":"model.message"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"content":"alpha done","id":"<id-17>","message_id":"<id-14>","thread_id":"<id-10>","type":"model.message.delta"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"content":"beta done","id":"<id-18>","message_id":"<id-16>","thread_id":"<id-12>","type":"model.message.delta"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-19>","message":{"content":"alpha done","finish_reason":"stop","usage":{"completion_tokens":5,"prompt_tokens":10,"total_tokens":15}},"message_id":"<id-14>","thread_id":"<id-10>","type":"model.message"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-20>","thread_id":"<id-10>","type":"thread.done"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-21>","message":{"content":"beta done","finish_reason":"stop","usage":{"completion_tokens":5,"prompt_tokens":10,"total_tokens":15}},"message_id":"<id-16>","thread_id":"<id-12>","type":"model.message"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-22>","thread_id":"<id-12>","type":"thread.done"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"blocked":false,"content":"alpha done","id":"<id-23>","thread_id":"<id-5>","tool_call_id":"call_a","type":"tool.response"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"blocked":false,"content":"beta done","id":"<id-24>","thread_id":"<id-5>","tool_call_id":"call_b","type":"tool.response"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-25>","message_id":"<id-26>","thread_id":"<id-5>","type":"model.message"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"content":"Both subagents finished.","id":"<id-27>","message_id":"<id-26>","thread_id":"<id-5>","type":"model.message.delta"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-28>","message":{"content":"Both subagents finished.","finish_reason":"stop","usage":{"completion_tokens":5,"prompt_tokens":10,"total_tokens":15}},"message_id":"<id-26>","thread_id":"<id-5>","type":"model.message"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-29>","state":"done","type":"turn.done"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"scenario":"edit-and-undo"}
+{"id":"d1","kind":"request","method":"workspace.open","params":{"path":"<workspace>"}}
+{"id":"d1","kind":"response","ok":true,"result":{"already_open":false,"provider":"deepseek","workspace":"<workspace>","workspace_config":{"loaded":false,"path":"<workspace>/.banana-harness/config.toml","present":false}}}
+{"id":"d2","kind":"request","method":"session.create","params":{"workspace":"<workspace>"}}
+{"id":"d2","kind":"response","ok":true,"result":{"session":{"created_at":"<time>","id":"<id-0>","model":"deepseek-flash","provider":"deepseek","title":null,"updated_at":"<time>","workspace":"<workspace>"}}}
+{"id":"d3","kind":"request","method":"turn.start","params":{"input":"change the greeting","session_id":"<id-0>","workspace":"<workspace>"}}
+{"id":"d3","kind":"response","ok":true,"result":{}}
+{"event":{"id":"<id-1>","session_id":"<id-0>","turn_id":"<id-2>","type":"turn.created"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-3>","message_id":"<id-4>","thread_id":"<id-5>","type":"model.message"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-6>","message":{"content":"","finish_reason":"tool_calls","usage":{"completion_tokens":5,"prompt_tokens":10,"total_tokens":15}},"message_id":"<id-4>","thread_id":"<id-5>","type":"model.message"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"arguments":"{\"new_string\":\"goodbye world\",\"old_string\":\"hello world\",\"path\":\"hello.txt\"}","id":"<id-7>","name":"edit","thread_id":"<id-5>","tool_call_id":"call_1","type":"tool.call"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"action_id":"<id-8>","arguments":"{\"new_string\":\"goodbye world\",\"old_string\":\"hello world\",\"path\":\"hello.txt\"}","id":"<id-9>","name":"edit","rule":"edit rule \"*\" requires approval","thread_id":"<id-5>","tool_call_id":"call_1","type":"tool.approval_required"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"id":"d4","kind":"request","method":"action.reply","params":{"action_id":"<id-8>","answer":"allow","session_id":"<id-0>","workspace":"<workspace>"}}
+{"id":"d4","kind":"response","ok":true,"result":{}}
+{"event":{"blocked":false,"content":"Edited hello.txt: replaced 1 occurrence(s)","diff":"--- before\n+++ after\n@@ -1 +1 @@\n-hello world\n+goodbye world\n","id":"<id-10>","thread_id":"<id-5>","tool_call_id":"call_1","type":"tool.response"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-11>","message_id":"<id-12>","thread_id":"<id-5>","type":"model.message"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"content":"Edited hello.txt.","id":"<id-13>","message_id":"<id-12>","thread_id":"<id-5>","type":"model.message.delta"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-14>","message":{"content":"Edited hello.txt.","finish_reason":"stop","usage":{"completion_tokens":5,"prompt_tokens":10,"total_tokens":15}},"message_id":"<id-12>","thread_id":"<id-5>","type":"model.message"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-15>","state":"done","type":"turn.done"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"id":"d5","kind":"request","method":"session.undo","params":{"session_id":"<id-0>","workspace":"<workspace>"}}
+{"id":"d5","kind":"response","ok":true,"result":{"event":{"id":"<id-16>","turn_id":"<id-2>","type":"turn.undone"},"outcome":"restored"}}
+{"scenario":"single-subagent"}
+{"id":"d1","kind":"request","method":"workspace.open","params":{"path":"<workspace>"}}
+{"id":"d1","kind":"response","ok":true,"result":{"already_open":false,"provider":"deepseek","workspace":"<workspace>","workspace_config":{"loaded":false,"path":"<workspace>/.banana-harness/config.toml","present":false}}}
+{"id":"d2","kind":"request","method":"session.create","params":{"workspace":"<workspace>"}}
+{"id":"d2","kind":"response","ok":true,"result":{"session":{"created_at":"<time>","id":"<id-0>","model":"deepseek-flash","provider":"deepseek","title":null,"updated_at":"<time>","workspace":"<workspace>"}}}
+{"id":"d3","kind":"request","method":"turn.start","params":{"input":"say hi","session_id":"<id-0>","workspace":"<workspace>"}}
+{"id":"d3","kind":"response","ok":true,"result":{}}
+{"event":{"id":"<id-1>","session_id":"<id-0>","turn_id":"<id-2>","type":"turn.created"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-3>","message_id":"<id-4>","thread_id":"<id-5>","type":"model.message"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-6>","message":{"content":"","finish_reason":"tool_calls","usage":{"completion_tokens":5,"prompt_tokens":10,"total_tokens":15}},"message_id":"<id-4>","thread_id":"<id-5>","type":"model.message"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"arguments":"{\"input\":\"task-alpha: say alpha\",\"name\":\"alpha\"}","id":"<id-7>","name":"create_sub_agent","thread_id":"<id-5>","tool_call_id":"call_a","type":"tool.call"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-8>","parent":"<id-5>","thread_id":"<id-9>","title":"alpha","type":"thread.created"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-10>","message_id":"<id-11>","thread_id":"<id-9>","type":"model.message"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"content":"alpha done","id":"<id-12>","message_id":"<id-11>","thread_id":"<id-9>","type":"model.message.delta"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-13>","message":{"content":"alpha done","finish_reason":"stop","usage":{"completion_tokens":5,"prompt_tokens":10,"total_tokens":15}},"message_id":"<id-11>","thread_id":"<id-9>","type":"model.message"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-14>","thread_id":"<id-9>","type":"thread.done"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"blocked":false,"content":"alpha done","id":"<id-15>","thread_id":"<id-5>","tool_call_id":"call_a","type":"tool.response"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-16>","message_id":"<id-17>","thread_id":"<id-5>","type":"model.message"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"content":"The subagent finished.","id":"<id-18>","message_id":"<id-17>","thread_id":"<id-5>","type":"model.message.delta"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-19>","message":{"content":"The subagent finished.","finish_reason":"stop","usage":{"completion_tokens":5,"prompt_tokens":10,"total_tokens":15}},"message_id":"<id-17>","thread_id":"<id-5>","type":"model.message"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-20>","state":"done","type":"turn.done"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"scenario":"compaction"}
+{"id":"d1","kind":"request","method":"workspace.open","params":{"path":"<workspace>"}}
+{"id":"d1","kind":"response","ok":true,"result":{"already_open":false,"provider":"deepseek","workspace":"<workspace>","workspace_config":{"loaded":false,"path":"<workspace>/.banana-harness/config.toml","present":false}}}
+{"id":"d2","kind":"request","method":"session.create","params":{"workspace":"<workspace>"}}
+{"id":"d2","kind":"response","ok":true,"result":{"session":{"created_at":"<time>","id":"<id-0>","model":"deepseek-flash","provider":"deepseek","title":null,"updated_at":"<time>","workspace":"<workspace>"}}}
+{"id":"d3","kind":"request","method":"turn.start","params":{"input":"say hi","session_id":"<id-0>","workspace":"<workspace>"}}
+{"id":"d3","kind":"response","ok":true,"result":{}}
+{"event":{"id":"<id-1>","session_id":"<id-0>","turn_id":"<id-2>","type":"turn.created"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-3>","thread_id":"<id-4>","type":"context.compacted","usage":{"completion_tokens":0,"prompt_tokens":47,"total_tokens":47}},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-5>","message_id":"<id-6>","thread_id":"<id-4>","type":"model.message"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"content":"All done.","id":"<id-7>","message_id":"<id-6>","thread_id":"<id-4>","type":"model.message.delta"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-8>","message":{"content":"All done.","finish_reason":"stop","usage":{"completion_tokens":5,"prompt_tokens":10,"total_tokens":15}},"message_id":"<id-6>","thread_id":"<id-4>","type":"model.message"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
+{"event":{"id":"<id-9>","state":"done","type":"turn.done"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}

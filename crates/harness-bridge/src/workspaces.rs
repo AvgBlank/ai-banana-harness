@@ -12,11 +12,16 @@ use harness_core::{
 use tokio::sync::OnceCell;
 
 use crate::frame::BridgeError;
+use crate::turns::Turns;
+
+/// How long a closing workspace or a shutdown waits for a cancelled turn to end.
+const TURN_STOP_LIMIT: std::time::Duration = std::time::Duration::from_secs(3);
 
 pub(crate) struct OpenWorkspace {
     /// The canonical path, the workspace's identity on the wire.
     pub(crate) path: String,
     pub(crate) harness: Arc<Harness>,
+    pub(crate) turns: Arc<Turns>,
     /// The provider new sessions start with.
     pub(crate) provider: Provider,
     pub(crate) config_path: PathBuf,
@@ -105,11 +110,29 @@ impl Workspaces {
             .ok_or_else(|| BridgeError::WorkspaceNotOpen(path.to_string()))
     }
 
-    /// Drops the workspace's harness; its sessions stay in the database.
-    pub(crate) fn close(&self, path: &str) -> Result<(), BridgeError> {
-        self.get(path)?;
+    /// Cancels the workspace's turn, waits for it to end, and drops its harness; its sessions
+    /// stay in the database.
+    pub(crate) async fn close(&self, path: &str) -> Result<(), BridgeError> {
+        let workspace = self.get(path)?;
+        workspace.turns.cancel_any().await;
+        workspace.turns.wait_idle(TURN_STOP_LIMIT).await;
         self.cells.lock().map_err(poisoned)?.remove(path);
         Ok(())
+    }
+
+    /// Cancels every running turn and waits up to [`TURN_STOP_LIMIT`] for them all to end.
+    pub(crate) async fn stop_turns(&self) {
+        let Ok(open) = self.list() else {
+            return;
+        };
+        for workspace in &open {
+            workspace.turns.cancel_any().await;
+        }
+        let deadline = tokio::time::Instant::now() + TURN_STOP_LIMIT;
+        for workspace in &open {
+            let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+            workspace.turns.wait_idle(left).await;
+        }
     }
 
     /// The open workspaces in path order.
@@ -164,6 +187,7 @@ fn build(
     Ok(OpenWorkspace {
         path: canonical.to_string_lossy().into_owned(),
         harness: Arc::new(harness),
+        turns: Arc::default(),
         provider,
         config_path,
         config_present,
