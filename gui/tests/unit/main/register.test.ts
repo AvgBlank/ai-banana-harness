@@ -47,17 +47,36 @@ function setup(options: { request?: (method: string, params: unknown) => unknown
     }
     return {};
   });
+  const stateListeners = new Set<(state: SidecarState) => void>();
   const supervisor = {
     request: request as never,
     restart: vi.fn(),
     setOpenWorkspaces: vi.fn(),
     state: { state: "ready", reopened: [] } as SidecarState,
+    onState: (listener: (state: SidecarState) => void) => {
+      stateListeners.add(listener);
+      return () => stateListeners.delete(listener);
+    },
   };
-  const keyState = { present: true, source: "env" as const };
+  const emit = (state: SidecarState) => {
+    supervisor.state = state;
+    for (const listener of [...stateListeners]) listener(state);
+  };
+  let keyState: { present: boolean; source: "env" | "session" | "login_shell" | "none" } = {
+    present: true,
+    source: "env",
+  };
   const keys = {
     status: vi.fn(() => keyState),
     resolve: vi.fn(async () => keyState),
     setForSession: vi.fn(() => ({ present: true, source: "session" as const })),
+    clearSession: vi.fn(() => {
+      keyState = { present: false, source: "none" };
+      return keyState;
+    }),
+  };
+  const setKey = (source: "env" | "session" | "login_shell" | "none") => {
+    keyState = { present: source !== "none", source };
   };
   const recorded: string[] = [];
   const known = new KnownWorkspaces();
@@ -94,6 +113,8 @@ function setup(options: { request?: (method: string, params: unknown) => unknown
     (handlers.get(channel) as Handler)({ senderFrame: frame }, arg);
   return {
     call,
+    emit,
+    setKey,
     supervisor,
     keys,
     recorded,
@@ -368,6 +389,125 @@ describe("the API key", () => {
     const running = setup();
     await running.call(channels.keyRecheck);
     expect(running.supervisor.restart).not.toHaveBeenCalled();
+  });
+});
+
+describe("signing out", () => {
+  const running = {
+    workspaces: [{ workspace: "/w", provider: "deepseek", active_turn: { turn_id: "T" } }],
+  };
+  const idle = { workspaces: [{ workspace: "/w", provider: "deepseek", active_turn: null }] };
+
+  test("a typed key is forgotten, the sidecar restarts, and the reply is true only once it waits for a key", async () => {
+    const t = setup({ request: () => idle });
+    t.setKey("session");
+    t.supervisor.restart.mockImplementation(() => {
+      t.emit({ state: "starting" });
+      setTimeout(() => t.emit({ state: "needs_key" }), 5);
+    });
+    const reply = await t.call(channels.keySignOut);
+    expect(reply).toEqual({ ok: true, value: { present: false, source: "none" } });
+    expect(t.keys.clearSession).toHaveBeenCalledTimes(1);
+    expect(t.supervisor.restart).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(reply)).not.toMatch(/sk-/);
+  });
+
+  test("main refuses while any turn runs, and neither the key nor the sidecar is touched", async () => {
+    const t = setup({ request: () => running });
+    t.setKey("session");
+    expect(await t.call(channels.keySignOut)).toMatchObject({
+      ok: false,
+      error: { code: "turn_running" },
+    });
+    expect(t.keys.clearSession).not.toHaveBeenCalled();
+    expect(t.supervisor.restart).not.toHaveBeenCalled();
+  });
+
+  test("when the turn check itself fails, nothing is signed out", async () => {
+    const t = setup({
+      request: () => {
+        throw new Error("boom");
+      },
+    });
+    t.setKey("session");
+    expect(await t.call(channels.keySignOut)).toMatchObject({
+      ok: false,
+      error: { code: "turn_check_failed" },
+    });
+    expect(t.keys.clearSession).not.toHaveBeenCalled();
+  });
+
+  test("a key from the environment or the login shell, or no key, is refused", async () => {
+    for (const [source, code] of [
+      ["env", "key_not_removable"],
+      ["login_shell", "key_not_removable"],
+      ["none", "not_signed_in"],
+    ] as const) {
+      const t = setup({ request: () => idle });
+      t.setKey(source);
+      expect(await t.call(channels.keySignOut)).toMatchObject({ ok: false, error: { code } });
+      expect(t.keys.clearSession).not.toHaveBeenCalled();
+      expect(t.supervisor.restart).not.toHaveBeenCalled();
+    }
+  });
+
+  test("a sidecar that cannot be reached counts as no turn, so sign-out goes ahead", async () => {
+    const { RpcError } = await import("../../../src/main/sidecar/client");
+    const t = setup({
+      request: () => {
+        throw new RpcError("sidecar_unavailable", "the sidecar is not running");
+      },
+    });
+    t.setKey("session");
+    t.supervisor.restart.mockImplementation(() =>
+      setTimeout(() => t.emit({ state: "needs_key" }), 1),
+    );
+    expect(await t.call(channels.keySignOut)).toMatchObject({ ok: true });
+  });
+
+  test("a restart that fails is reported as a failure, after the key is already gone", async () => {
+    const t = setup({ request: () => idle });
+    t.setKey("session");
+    t.supervisor.restart.mockImplementation(() =>
+      setTimeout(
+        () => t.emit({ state: "failed", reason: "no_ready", message: "did not say ready" }),
+        1,
+      ),
+    );
+    expect(await t.call(channels.keySignOut)).toMatchObject({
+      ok: false,
+      error: { code: "restart_failed" },
+    });
+    expect(t.keys.clearSession).toHaveBeenCalledTimes(1);
+  });
+
+  test("a restart that never settles times out instead of claiming success", async () => {
+    vi.useFakeTimers();
+    try {
+      const t = setup({ request: () => idle });
+      t.setKey("session");
+      const pending = t.call(channels.keySignOut);
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(await pending).toMatchObject({ ok: false, error: { code: "restart_timeout" } });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("the renderer cannot steer it: arguments never reach the handler", async () => {
+    const t = setup({ request: () => idle });
+    t.setKey("session");
+    t.supervisor.restart.mockImplementation(() =>
+      setTimeout(() => t.emit({ state: "needs_key" }), 1),
+    );
+    expect(await t.call(channels.keySignOut, { key: "sk-x", force: true })).toMatchObject({
+      ok: true,
+    });
+    expect(t.keys.clearSession).toHaveBeenCalledWith();
+    expect(t.request).not.toHaveBeenCalledWith(
+      "workspace.list",
+      expect.objectContaining({ force: true }),
+    );
   });
 });
 

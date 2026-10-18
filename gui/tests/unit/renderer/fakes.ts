@@ -151,6 +151,10 @@ export function fakeClient(
       key = { present: true, source: "session" };
       return key;
     }),
+    signOut: vi.fn(async () => {
+      key = { present: false, source: "none" };
+      return key;
+    }),
     listSessions: vi.fn(async () => [...created, ...(options.sessions ?? [])]),
     activeTurns: vi.fn(async () =>
       (options.running ?? []).map((sessionId) => ({

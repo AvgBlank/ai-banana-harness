@@ -183,11 +183,71 @@ describe("profile", () => {
     expect(screen.queryByRole("img", { name: /^Profile:/ })).toBeNull();
   });
 
-  test("never mentions the API key and shows no key value", async () => {
-    await openSettings({}, { ...DEFAULT_PREFS, profile: { displayName: "Ada" } });
+  test("the profile section names the sign-in state but never shows a key value", async () => {
+    const synthetic = "sk-test-synthetic-0123456789";
+    const client = await openSettings({ key: { present: true, source: "session" } });
+    // A status from main is `{ present, source }`; even a stray value would have no field here.
+    expect(Object.keys(await client.keyStatus()).sort()).toEqual(["present", "source"]);
     const section = screen
       .getByRole("heading", { name: "Profile" })
       .closest("section") as HTMLElement;
-    expect(section.textContent).not.toMatch(/key|token/i);
+    expect(section.textContent).toContain("Signed in");
+    expect(section.textContent).not.toContain(synthetic);
+    expect(document.body.innerHTML).not.toContain(synthetic);
+  });
+});
+
+describe("sign in and sign out", () => {
+  const typed = { present: true, source: "session" as const };
+
+  test("a key from the environment says so, and Sign out is disabled", async () => {
+    await openSettings();
+    expect(screen.getByText("Signed in")).toBeTruthy();
+    expect(screen.getByText(/cannot be removed here/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Sign out" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+  });
+
+  test("with no key it says not signed in, and Sign in goes to the onboarding panel", async () => {
+    await openSettings({ key: { present: false, source: "none" } });
+    expect(screen.getByText("Not signed in")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Sign in" })));
+    expect(screen.getByLabelText("API key for this session")).toBeTruthy();
+  });
+
+  test("signing out a typed key asks main, then shows the no-key state with the panel", async () => {
+    const client = await openSettings({ key: typed });
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Sign out" })));
+    expect(client.signOut).toHaveBeenCalledWith();
+    expect(await screen.findByLabelText("API key for this session")).toBeTruthy();
+    expect(screen.queryByText("Signed in")).toBeNull();
+  });
+
+  test("a refusal from main is shown, and the signed-in state stays", async () => {
+    const client = await openSettings({ key: typed });
+    client.signOut.mockRejectedValueOnce({
+      code: "turn_running",
+      message: "stop the running turn before signing out",
+    });
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Sign out" })));
+    expect((await screen.findByRole("alert")).textContent).toContain("stop the running turn");
+    expect(screen.getByText("Signed in")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Sign out" }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+
+  test("the display name is untouched by signing out, and no call carries it", async () => {
+    const client = await openSettings(
+      { key: typed },
+      { ...DEFAULT_PREFS, profile: { displayName: "Ada" } },
+    );
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Sign out" })));
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: /Settings/ })));
+    expect((screen.getByLabelText("Display name") as HTMLInputElement).value).toBe("Ada");
+    expect(client.setDisplayName).not.toHaveBeenCalled();
+    expect(client.signOut.mock.calls[0]).toEqual([]);
   });
 });

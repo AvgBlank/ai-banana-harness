@@ -46,7 +46,10 @@ key that is kept in memory for that session only. It never stores the key.
 
 Settings starts with a **Profile**: an optional display name (1 to 60 characters) kept only in the
 app's preferences file on this Mac. It is not an account and is never sent anywhere; clear it to
-remove it.
+remove it. Under it, Settings shows whether a key is available and where it came from, never the key.
+A key you typed for the session can be signed out: the app forgets it and restarts the sidecar, and
+the window returns to the no-key panel. Sign-out is refused while a turn runs, and a key from
+`AI_API_KEY` or your login shell has to be removed there.
 
 A workspace with its own `.banana-harness/config.toml` opens in **restricted mode**: that file can
 start programs, loosen guardrails and change where your key is sent, so it is ignored until you

@@ -179,6 +179,12 @@ export interface BananaApi {
     recheck(): Promise<KeyStatus>;
     /** Keeps a typed key in memory for this run and restarts the sidecar with it; write-only. */
     setForSession(key: string): Promise<KeyStatus>;
+    /**
+     * Forgets a key typed for this session and starts the sidecar over without it. Refused while
+     * a turn runs and for a key from the environment or the login shell; resolves only once the
+     * sidecar is waiting for a key.
+     */
+    signOut(): Promise<KeyStatus>;
   };
   readonly rpc: { call(method: string, params: Record<string, unknown>): Promise<unknown> };
   readonly external: { open(url: string): Promise<void> };

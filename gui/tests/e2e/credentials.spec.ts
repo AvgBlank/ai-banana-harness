@@ -303,3 +303,65 @@ test("preferences keep the last workspace, the recents and the panels, and hold 
   await second.page.getByRole("button", { name: /^Workspace:/ }).click();
   await expect(second.page.getByText(workspace).first()).toBeVisible();
 });
+
+test("sign out forgets a typed key and restarts the sidecar; signing in again works", async ({
+  launch,
+  stub,
+  queueAnswer,
+}) => {
+  await queueAnswer("after signing in again");
+  const shell = stubShell(stub, "empty-shell-signout", block(["HOME=/nowhere"]));
+  const app = await launch({ env: noKeyEnv(shell) });
+  const { page } = app;
+  const seen: unknown[] = [];
+
+  await page.getByLabel("API key for this session").fill(TEST_KEY);
+  await page.getByRole("button", { name: "Use for this session" }).click();
+  await expect(page.getByLabel("API key for this session")).toHaveCount(0);
+  await openWorkspace(app, stub);
+
+  await page.getByRole("button", { name: /Settings/ }).click();
+  await expect(page.getByText("Signed in", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Sign out" }).click();
+
+  // Back to the no-key state with the onboarding panel, and the key is nowhere.
+  await expect(page.getByRole("heading", { name: "No API key found" })).toBeVisible();
+  seen.push(await page.evaluate(() => window.banana.key.status()));
+  expect(seen[0]).toEqual({ present: false, source: "none" });
+  const refused = await page.evaluate(async () => {
+    const picked = (await window.banana.workspace.pick()) as string;
+    return window.banana.workspace.open(picked).then(
+      () => "opened",
+      (e: { code: string }) => e.code,
+    );
+  });
+  expect(refused).toBe("api_key_missing");
+  await assertKeyNowhere(app, seen);
+
+  // Signing in again brings the workspace back and the provider sees the key.
+  await page.getByLabel("API key for this session").fill(TEST_KEY);
+  await page.getByRole("button", { name: "Use for this session" }).click();
+  await expect(page.getByLabel("API key for this session")).toHaveCount(0);
+  const workspace = await openWorkspace(app, stub);
+  expect(await runTurn(page, workspace)).toContain("turn.done");
+  expect(await providerSawTheKey(stub)).toEqual([true]);
+  await assertKeyNowhere(app, seen);
+});
+
+test("a key from the environment cannot be signed out of, and the sign-out channel refuses it", async ({
+  launch,
+}) => {
+  const app = await launch();
+  const { page } = app;
+  await page.getByRole("button", { name: /Settings/ }).click();
+  await expect(page.getByText(/cannot be removed here/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Sign out" })).toBeDisabled();
+  const refusal = await page.evaluate(() =>
+    window.banana.key.signOut().then(
+      () => "signed out",
+      (e: { code: string }) => e.code,
+    ),
+  );
+  expect(refusal).toBe("key_not_removable");
+  expect(await page.evaluate(() => window.banana.key.status())).toMatchObject({ present: true });
+});

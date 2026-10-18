@@ -47,6 +47,7 @@ const api: BananaApi = Object.freeze({
   key: Object.freeze({
     status: () => invoke<KeyStatus>(channels.keyStatus),
     recheck: () => invoke<KeyStatus>(channels.keyRecheck),
+    signOut: () => invoke<KeyStatus>(channels.keySignOut),
     setForSession: (key: string) => invoke<KeyStatus>(channels.keySetForSession, { key }),
   }),
   rpc: Object.freeze({

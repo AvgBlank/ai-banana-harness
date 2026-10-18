@@ -122,3 +122,32 @@ describe("the sidecar environment", () => {
     expect(resolver.environment()).toEqual({ variables: { PATH: "/p" }, apiKey: undefined });
   });
 });
+
+describe("clearing the typed key", () => {
+  test("with nothing else it leaves no key, and the sidecar environment has none", async () => {
+    const resolver = new KeyResolver({ env: { PATH: "/p" }, probe: probeOf(null) });
+    await resolver.resolve();
+    resolver.setForSession("sk-typed");
+    expect(resolver.clearSession()).toEqual({ present: false, source: "none" });
+    expect(resolver.environment().apiKey).toBeUndefined();
+    expect(resolver.environment().variables.AI_API_KEY).toBeUndefined();
+    // Check again must not bring the forgotten key back.
+    expect(await resolver.resolve(true)).toEqual({ present: false, source: "none" });
+  });
+
+  test("it falls back to the environment, then the login shell, then none", () => {
+    const env = new KeyResolver({ env: { AI_API_KEY: "e", PATH: "/p" }, probe: probeOf(null) });
+    env.setForSession("typed");
+    expect(env.clearSession()).toEqual({ present: true, source: "env" });
+    expect(env.environment().apiKey).toBe("e");
+  });
+
+  test("a key from the login shell stays after clearing a typed one", async () => {
+    const probe = probeOf({ AI_API_KEY: "from-shell" });
+    const resolver = new KeyResolver({ env: { PATH: "/p" }, probe });
+    await resolver.resolve();
+    resolver.setForSession("typed");
+    expect(resolver.clearSession()).toEqual({ present: true, source: "login_shell" });
+    expect(probe).toHaveBeenCalledTimes(1);
+  });
+});

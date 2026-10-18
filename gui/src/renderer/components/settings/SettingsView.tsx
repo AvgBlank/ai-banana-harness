@@ -315,11 +315,22 @@ function CommandExecution({ runner }: { runner: CommandRunnerInfo | null }) {
 /** A name for this Mac's profile: local only, saved on blur or Enter, never sent anywhere. */
 function ProfileSection({
   profile,
+  keyStatus,
   onSave,
+  onSignIn,
+  onSignOut,
 }: {
   profile: Profile | null;
+  keyStatus: KeyStatus | null;
   onSave: (name: string) => Promise<void>;
+  onSignIn: () => void;
+  onSignOut: () => Promise<void>;
 }) {
+  const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
+  const signedIn = keyStatus?.present ?? false;
+  const typed = keyStatus?.source === "session";
+
   const saved = profile?.displayName ?? "";
   const [value, setValue] = useState(saved);
   const [error, setError] = useState<string | null>(null);
@@ -398,6 +409,52 @@ function ProfileSection({
           </Button>
         )}
       </div>
+
+      <div className="mt-4 flex items-center gap-3 rounded-[12px] border border-line bg-s1 px-4 py-3">
+        <div className="min-w-0 flex-1">
+          <div className="text-[14px] font-medium">
+            {keyStatus === null ? "Checking…" : signedIn ? "Signed in" : "Not signed in"}
+          </div>
+          <div className="text-[12.5px] text-muted">
+            {!signedIn
+              ? "Add an API key to start sessions."
+              : typed
+                ? "Using a key you typed. It is kept in memory for this session only."
+                : "Using a key from your environment or login shell. It cannot be removed here; unset AI_API_KEY there."}
+          </div>
+        </div>
+        {signedIn ? (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!typed || signingOut}
+            title={typed ? undefined : "This key comes from outside the app"}
+            onClick={async () => {
+              setSigningOut(true);
+              setSignOutError(null);
+              try {
+                await onSignOut();
+              } catch (e) {
+                setSignOutError((e as { message?: string }).message ?? "Could not sign out.");
+              }
+              setSigningOut(false);
+            }}
+          >
+            Sign out
+          </Button>
+        ) : (
+          keyStatus !== null && (
+            <Button variant="outline" size="sm" onClick={onSignIn}>
+              Sign in
+            </Button>
+          )
+        )}
+      </div>
+      {signOutError && (
+        <p role="alert" className="mt-1.5 text-[12.5px] text-danger">
+          {signOutError}
+        </p>
+      )}
     </Block>
   );
 }
@@ -405,6 +462,8 @@ function ProfileSection({
 export function SettingsView({
   profile,
   onSaveName,
+  onSignIn,
+  onSignOut,
   keyStatus,
   runner,
   onRecheckKey,
@@ -412,6 +471,8 @@ export function SettingsView({
 }: {
   profile: Profile | null;
   onSaveName: (name: string) => Promise<void>;
+  onSignIn: () => void;
+  onSignOut: () => Promise<void>;
   keyStatus: KeyStatus | null;
   runner: CommandRunnerInfo | null;
   onRecheckKey: () => Promise<void>;
@@ -422,7 +483,13 @@ export function SettingsView({
       <div className="mx-auto w-full max-w-[720px] px-8 py-10">
         <h1 className="text-[26px] font-semibold tracking-tight">Settings</h1>
 
-        <ProfileSection profile={profile} onSave={onSaveName} />
+        <ProfileSection
+          profile={profile}
+          keyStatus={keyStatus}
+          onSave={onSaveName}
+          onSignIn={onSignIn}
+          onSignOut={onSignOut}
+        />
 
         <Block
           title="Appearance"

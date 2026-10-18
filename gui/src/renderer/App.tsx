@@ -162,6 +162,12 @@ function Shell({ prefs }: { prefs: Prefs }) {
     async () => applyKey(await client.recheckKey()),
     [client, applyKey],
   );
+  // Main refuses while a turn runs and answers only once the sidecar waits for a key, so a
+  // resolved sign-out is a true one; the window then shows the no-key state with its panel.
+  const signOut = useCallback(async () => {
+    setKey(await client.signOut());
+    set({ view: "home" });
+  }, [client, set]);
   const useKey = useCallback(
     async (typed: string) => applyKey(await client.setSessionKey(typed)),
     [client, applyKey],
@@ -474,6 +480,8 @@ function Shell({ prefs }: { prefs: Prefs }) {
             <SettingsView
               keyStatus={key}
               profile={profile}
+              onSignOut={signOut}
+              onSignIn={() => set({ view: "home" })}
               onSaveName={async (name) => setProfile((await client.setDisplayName(name)).profile)}
               runner={currentWorkspace ? (runners[currentWorkspace] ?? null) : null}
               onRecheckKey={recheckKey}

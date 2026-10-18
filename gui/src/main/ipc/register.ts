@@ -1,4 +1,4 @@
-import type { AppInfo, KeyStatus, OpenedWorkspace } from "../../shared/api";
+import type { AppInfo, KeyStatus, OpenedWorkspace, SidecarState } from "../../shared/api";
 import { channels } from "../../shared/channels";
 import { IpcError, ipcArgs, parseRpcCall } from "../../shared/ipc";
 import { PROTOCOL_VERSION } from "../../shared/protocol";
@@ -6,6 +6,7 @@ import type { ExternalLinks } from "../external/links";
 import type { KeyResolver } from "../key/resolver";
 import type { LiveBuffers } from "../live/buffer";
 import type { Preferences } from "../prefs";
+import { RpcError } from "../sidecar/client";
 import type { SidecarSupervisor } from "../sidecar/supervisor";
 import { WorkspaceTrust } from "../trust/flow";
 import type { TrustStore } from "../trust/store";
@@ -21,8 +22,11 @@ export interface IpcPorts {
 export interface IpcDeps {
   ipc: IpcPorts;
   trust: TrustContext;
-  supervisor: Pick<SidecarSupervisor, "request" | "restart" | "setOpenWorkspaces" | "state">;
-  keys: Pick<KeyResolver, "status" | "resolve" | "setForSession">;
+  supervisor: Pick<
+    SidecarSupervisor,
+    "request" | "restart" | "setOpenWorkspaces" | "state" | "onState"
+  >;
+  keys: Pick<KeyResolver, "status" | "resolve" | "setForSession" | "clearSession">;
   known: KnownWorkspaces;
   live: Pick<LiveBuffers, "attach" | "clear" | "started">;
   prefs: Pick<Preferences, "get" | "set" | "recordWorkspace" | "setDisplayName">;
@@ -34,6 +38,9 @@ export interface IpcDeps {
   /** The system folder dialog; only main ever opens it. */
   pickFolder: () => Promise<string | null>;
 }
+
+/** How long a sign-out waits for the restarted sidecar to say it needs a key. */
+export const SIGN_OUT_TIMEOUT_MS = 15_000;
 
 export function registerIpc(deps: IpcDeps): void {
   const { ipc, trust, supervisor, known, links, keys } = deps;
@@ -158,6 +165,80 @@ export function registerIpc(deps: IpcDeps): void {
       const status = keys.setForSession(key);
       supervisor.restart();
       return status;
+    }),
+  );
+
+  // A turn that runs holds the key it started with, so the sidecar is asked, not the window.
+  const turnRunning = async (): Promise<boolean> => {
+    try {
+      const { workspaces } = await supervisor.request("workspace.list", {});
+      return workspaces.some((w) => w.active_turn !== null);
+    } catch (error) {
+      // A sidecar that is not running has no turn; any other failure cannot prove there is none.
+      if (error instanceof RpcError && error.code === "sidecar_unavailable") return false;
+      throw new IpcError("turn_check_failed", "could not tell whether a turn is running", {
+        cause: error,
+      });
+    }
+  };
+
+  // Resolves once the restarted sidecar waits for a key; any other end is reported, not hidden.
+  const untilWaitingForKey = () =>
+    new Promise<void>((resolve, reject) => {
+      const done = (end: () => void) => {
+        clearTimeout(timer);
+        off();
+        end();
+      };
+      const check = (state: SidecarState) => {
+        if (state.state === "needs_key") done(resolve);
+        else if (state.state === "failed" || state.state === "ready")
+          done(() =>
+            reject(
+              new IpcError(
+                "restart_failed",
+                state.state === "failed"
+                  ? "the key was forgotten, but the sidecar did not restart; use Restart"
+                  : "the sidecar restarted with a key still available to it",
+              ),
+            ),
+          );
+      };
+      const off = supervisor.onState(check);
+      const timer = setTimeout(
+        () =>
+          done(() =>
+            reject(
+              new IpcError(
+                "restart_timeout",
+                "the key was forgotten; the sidecar is still starting",
+              ),
+            ),
+          ),
+        SIGN_OUT_TIMEOUT_MS,
+      );
+    });
+
+  ipc.handle(
+    channels.keySignOut,
+    guardedNoArgs(trust, async (): Promise<KeyStatus> => {
+      const { source } = keys.status();
+      if (source === "none") throw new IpcError("not_signed_in", "there is no key to sign out of");
+      if (source !== "session") {
+        throw new IpcError(
+          "key_not_removable",
+          "this key comes from your environment or login shell; remove it there",
+        );
+      }
+      if (await turnRunning()) {
+        throw new IpcError("turn_running", "stop the running turn before signing out");
+      }
+      keys.clearSession();
+      // Subscribed before the restart so the new state cannot be missed.
+      const waiting = untilWaitingForKey();
+      supervisor.restart();
+      await waiting;
+      return keys.status();
     }),
   );
 

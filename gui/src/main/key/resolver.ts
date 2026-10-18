@@ -57,6 +57,20 @@ export class KeyResolver {
     return this.status();
   }
 
+  /**
+   * Forgets the typed key. What the environment and the login shell already gave stays, in that
+   * order; nothing is probed again, so this never starts a shell.
+   */
+  clearSession(): KeyStatus {
+    this.entered = undefined;
+    const fromEnv = clean(this.options.env.AI_API_KEY);
+    const fromShell = clean(this.shell.AI_API_KEY);
+    if (fromEnv) this.set(fromEnv, "env");
+    else if (fromShell) this.set(fromShell, "login_shell");
+    else this.set(undefined, "none");
+    return this.status();
+  }
+
   status(): KeyStatus {
     return { present: this.key !== undefined, source: this.source };
   }

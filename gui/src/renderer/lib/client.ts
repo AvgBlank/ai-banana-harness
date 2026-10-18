@@ -36,6 +36,8 @@ export interface Client {
   recheckKey(): Promise<KeyStatus>;
   /** Hands a typed key to main, which keeps it in memory and restarts the sidecar with it. */
   setSessionKey(key: string): Promise<KeyStatus>;
+  /** Forgets a typed key and waits for the sidecar to restart without it; main may refuse. */
+  signOut(): Promise<KeyStatus>;
   listSessions(): Promise<Session[]>;
   /** The turn running in each workspace, if any. */
   activeTurns(): Promise<Array<{ workspace: string; sessionId: string; turnId: string | null }>>;
@@ -89,6 +91,7 @@ export function clientFor(banana: BananaApi): Client {
     keyStatus: () => banana.key.status(),
     recheckKey: () => banana.key.recheck(),
     setSessionKey: (key) => banana.key.setForSession(key),
+    signOut: () => banana.key.signOut(),
     listSessions: async () => (await call("session.list", {})).sessions,
     activeTurns: async () =>
       (await call("workspace.list", {})).workspaces.flatMap((w) =>

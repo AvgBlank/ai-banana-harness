@@ -15,6 +15,7 @@ export const channels = {
   keyStatus: "banana:key:status",
   keyRecheck: "banana:key:recheck",
   keySetForSession: "banana:key:set-for-session",
+  keySignOut: "banana:key:sign-out",
   rpcCall: "banana:rpc:call",
   externalOpen: "banana:external:open",
   sidecarRestart: "banana:sidecar:restart",
