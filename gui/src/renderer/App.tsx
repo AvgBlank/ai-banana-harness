@@ -91,6 +91,7 @@ function Shell({ prefs }: { prefs: Prefs }) {
     error: string | null;
   } | null>(null);
   const [recents, setRecents] = useState<string[]>(prefs.recents);
+  const [profile, setProfile] = useState(prefs.profile);
 
   const track = useCallback((opened: OpenedWorkspace) => {
     setTrust((before) => ({ ...before, [opened.workspace]: opened.trust }));
@@ -462,6 +463,7 @@ function Shell({ prefs }: { prefs: Prefs }) {
             data={data}
             now={now}
             canOpen={canOpen}
+            profile={profile}
             restricted={restrictedWorkspaces}
             onOpenFolder={openFolder}
             onSelect={selectSession}
@@ -471,6 +473,8 @@ function Shell({ prefs }: { prefs: Prefs }) {
           {state.view === "settings" ? (
             <SettingsView
               keyStatus={key}
+              profile={profile}
+              onSaveName={async (name) => setProfile((await client.setDisplayName(name)).profile)}
               runner={currentWorkspace ? (runners[currentWorkspace] ?? null) : null}
               onRecheckKey={recheckKey}
               onForgotten={(opened) => opened && track(opened)}

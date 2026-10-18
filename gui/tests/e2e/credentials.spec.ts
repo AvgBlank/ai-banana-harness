@@ -285,6 +285,7 @@ test("preferences keep the last workspace, the recents and the panels, and hold 
     "changesScope",
     "changesWidth",
     "lastWorkspace",
+    "profile",
     "recents",
     "sidebarOpen",
     "theme",

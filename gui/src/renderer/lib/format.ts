@@ -20,3 +20,9 @@ export function relativeTime(iso: string, now: number): string {
   if (age < 7 * DAY) return `${Math.floor(age / DAY)}d`;
   return `${Math.floor(age / (7 * DAY))}w`;
 }
+
+/** The first character of a display name, upper-cased, for the avatar; `?` for none. */
+export function initialOf(name: string | null | undefined): string {
+  const first = Array.from((name ?? "").trim())[0];
+  return first ? first.toUpperCase() : "?";
+}

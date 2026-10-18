@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { cn } from "@/lib/cn";
-import { folderName } from "@/lib/format";
+import { folderName, initialOf } from "@/lib/format";
 import { useClient } from "@/state/client-context";
 import { type Theme, useApp } from "@/state/store";
 import type {
@@ -12,8 +12,10 @@ import type {
   CommandRunnerInfo,
   KeyStatus,
   OpenedWorkspace,
+  Profile,
   TrustedWorkspace,
 } from "../../../shared/api";
+import { displayName as displayNameSchema } from "../../../shared/ipc";
 
 /** Fixed colours on purpose: each card previews its own theme regardless of the active one. */
 const PREVIEWS: Record<
@@ -310,12 +312,106 @@ function CommandExecution({ runner }: { runner: CommandRunnerInfo | null }) {
   );
 }
 
+/** A name for this Mac's profile: local only, saved on blur or Enter, never sent anywhere. */
+function ProfileSection({
+  profile,
+  onSave,
+}: {
+  profile: Profile | null;
+  onSave: (name: string) => Promise<void>;
+}) {
+  const saved = profile?.displayName ?? "";
+  const [value, setValue] = useState(saved);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => setValue(saved), [saved]);
+
+  const commit = async () => {
+    const checked = displayNameSchema.safeParse(value);
+    if (!checked.success) {
+      setError(checked.error.issues[0]?.message ?? "That name is not valid.");
+      return;
+    }
+    if (checked.data === saved) {
+      setError(null);
+      setValue(saved);
+      return;
+    }
+    try {
+      await onSave(checked.data);
+      setError(null);
+    } catch (e) {
+      setError(
+        e instanceof Error ? e.message : ((e as { message?: string }).message ?? "Could not save."),
+      );
+    }
+  };
+
+  return (
+    <Block
+      title="Profile"
+      hint="A name for this Mac. It stays on this device and is not an account or a sign-in."
+    >
+      <div className="flex items-center gap-3">
+        <span
+          aria-hidden="true"
+          className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-accent-soft text-[17px] font-semibold text-accent"
+        >
+          {initialOf(saved)}
+        </span>
+        <div className="min-w-0 flex-1">
+          <label htmlFor="display-name" className="sr-only">
+            Display name
+          </label>
+          <input
+            id="display-name"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onBlur={() => void commit()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur();
+            }}
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="Your name"
+            aria-invalid={error !== null}
+            aria-describedby={error ? "display-name-error" : undefined}
+            className="h-9 w-full rounded-md border border-line-strong bg-s2 px-3 text-[13.5px] text-fg placeholder:text-faint focus:border-accent-line focus:outline-none"
+          />
+          {error && (
+            <p id="display-name-error" role="alert" className="mt-1.5 text-[12.5px] text-danger">
+              {error}
+            </p>
+          )}
+        </div>
+        {saved !== "" && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setValue("");
+              void onSave("")
+                .then(() => setError(null))
+                .catch(() => setError("Could not clear the name."));
+            }}
+          >
+            Clear
+          </Button>
+        )}
+      </div>
+    </Block>
+  );
+}
+
 export function SettingsView({
+  profile,
+  onSaveName,
   keyStatus,
   runner,
   onRecheckKey,
   onForgotten,
 }: {
+  profile: Profile | null;
+  onSaveName: (name: string) => Promise<void>;
   keyStatus: KeyStatus | null;
   runner: CommandRunnerInfo | null;
   onRecheckKey: () => Promise<void>;
@@ -325,6 +421,8 @@ export function SettingsView({
     <div className="h-full overflow-y-auto">
       <div className="mx-auto w-full max-w-[720px] px-8 py-10">
         <h1 className="text-[26px] font-semibold tracking-tight">Settings</h1>
+
+        <ProfileSection profile={profile} onSave={onSaveName} />
 
         <Block
           title="Appearance"

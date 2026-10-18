@@ -15,6 +15,7 @@ const DEFAULTS = {
   changesWidth: 480,
   lastWorkspace: null,
   recents: [],
+  profile: null,
 };
 
 test("a missing file gives the defaults", async () => {
@@ -75,4 +76,57 @@ test("recording a workspace keeps the newest ten, once each, and sets the last o
   expect(now.recents.filter((p) => p === "/w5")).toHaveLength(1);
   expect(now.recents).not.toContain("/w0");
   expect(await new Preferences(join(dir(), "none.json")).get()).toEqual(DEFAULTS);
+});
+
+test("a display name is trimmed, stored privately and read back; empty clears it", async () => {
+  const file = join(dir(), "preferences.json");
+  const prefs = new Preferences(file);
+  expect((await prefs.setDisplayName("  Ada Lovelace ")).profile).toEqual({
+    displayName: "Ada Lovelace",
+  });
+  expect((await new Preferences(file).get()).profile).toEqual({ displayName: "Ada Lovelace" });
+  expect(statSync(file).mode & 0o777).toBe(0o600);
+  expect((await prefs.setDisplayName("  ")).profile).toBeNull();
+  expect((await new Preferences(file).get()).profile).toBeNull();
+});
+
+test("names of 60 characters are kept and longer or control-character names are refused", async () => {
+  const prefs = new Preferences(join(dir(), "preferences.json"));
+  const sixty = "é".repeat(60);
+  expect((await prefs.setDisplayName(sixty)).profile?.displayName).toBe(sixty);
+  await expect(prefs.setDisplayName("x".repeat(61))).rejects.toThrow();
+  await expect(prefs.setDisplayName("a\tb")).rejects.toThrow();
+  expect((await prefs.get()).profile?.displayName).toBe(sixty);
+});
+
+test("a file from before profiles has no profile and keeps its other settings", async () => {
+  const file = join(dir(), "preferences.json");
+  writeFileSync(file, JSON.stringify({ theme: "light", recents: ["/a"] }));
+  const prefs = await new Preferences(file).get();
+  expect(prefs).toEqual({ ...DEFAULTS, theme: "light", recents: ["/a"] });
+});
+
+test("a malformed profile is dropped without resetting the rest", async () => {
+  for (const profile of [
+    { displayName: "" },
+    { displayName: 5 },
+    "Ada",
+    { displayName: "x".repeat(99) },
+    [],
+  ]) {
+    const file = join(dir(), "preferences.json");
+    writeFileSync(file, JSON.stringify({ theme: "light", profile }));
+    expect(await new Preferences(file).get()).toEqual({ ...DEFAULTS, theme: "light" });
+  }
+});
+
+test("the renderer's preference patch cannot set the profile, and the file holds nothing secret", async () => {
+  const file = join(dir(), "preferences.json");
+  const prefs = new Preferences(file);
+  await prefs.set({ theme: "system", profile: { displayName: "Eve" } } as never);
+  await prefs.setDisplayName("Ada");
+  const text = readFileSync(file, "utf8");
+  expect(JSON.parse(text).profile).toEqual({ displayName: "Ada" });
+  expect(Object.keys(JSON.parse(text)).sort()).toEqual(Object.keys(DEFAULTS).sort());
+  expect(text).not.toMatch(/key|token|secret/i);
 });

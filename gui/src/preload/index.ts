@@ -30,6 +30,10 @@ const api: BananaApi = Object.freeze({
     get: () => invoke<Prefs>(channels.prefsGet),
     set: (patch: PrefsPatch) => invoke<Prefs>(channels.prefsSet, patch),
   }),
+  profile: Object.freeze({
+    setDisplayName: (displayName: string) =>
+      invoke<Prefs>(channels.profileSetDisplayName, { displayName }),
+  }),
   workspace: Object.freeze({
     pick: () => invoke<string | null>(channels.workspacePick),
     open: (path: string) => invoke<OpenedWorkspace>(channels.workspaceOpen, { path }),

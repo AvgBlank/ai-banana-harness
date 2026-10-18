@@ -14,7 +14,16 @@ export interface Prefs {
   /** The workspace main opened last, and up to ten recent ones, newest first. Main owns both. */
   lastWorkspace: string | null;
   recents: string[];
+  /** The local profile; `null` until a name is set. Never an identity at any provider. */
+  profile: Profile | null;
 }
+
+export interface Profile {
+  displayName: string;
+}
+
+/** The longest display name main accepts, in characters. */
+export const MAX_DISPLAY_NAME = 60;
 
 /** The part of the preferences the renderer may change. */
 export type PrefsPatch = Partial<
@@ -142,6 +151,10 @@ export interface BananaApi {
     /** Merges a patch and returns the stored result; unknown keys are dropped. */
     set(patch: PrefsPatch): Promise<Prefs>;
   };
+  readonly profile: {
+    /** Sets the display name (1 to 60 characters once trimmed); an empty one clears the profile. */
+    setDisplayName(displayName: string): Promise<Prefs>;
+  };
   readonly workspace: {
     /** The system folder dialog; `null` when cancelled. */
     pick(): Promise<string | null>;
@@ -186,6 +199,7 @@ export interface BananaApi {
 export const bananaKeys = [
   "app",
   "prefs",
+  "profile",
   "workspace",
   "key",
   "rpc",

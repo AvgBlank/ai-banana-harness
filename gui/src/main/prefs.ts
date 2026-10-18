@@ -2,6 +2,7 @@ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { z } from "zod";
 import type { Prefs, PrefsPatch } from "../shared/api";
+import { displayName } from "../shared/ipc";
 
 export const MAX_RECENTS = 10;
 const path = z.string().min(1).max(4096);
@@ -14,6 +15,12 @@ const stored = z.object({
   changesWidth: z.number().int().min(360).max(760).optional(),
   lastWorkspace: path.nullable().optional(),
   recents: z.array(path).optional(),
+  // A malformed profile alone is dropped; it must not reset the rest of the file.
+  profile: z
+    .object({ displayName: displayName.min(1) })
+    .nullable()
+    .catch(null)
+    .optional(),
 });
 
 export const DEFAULT_PREFS: Prefs = {
@@ -24,6 +31,7 @@ export const DEFAULT_PREFS: Prefs = {
   changesWidth: 480,
   lastWorkspace: null,
   recents: [],
+  profile: null,
 };
 
 /** The user's preferences in one small JSON file. A missing or corrupt file means the defaults. */
@@ -51,6 +59,15 @@ export class Preferences {
     return this.save({
       ...(await this.get()),
       ...definedOnly({ theme, sidebarOpen, changesOpen, changesScope, changesWidth }),
+    });
+  }
+
+  /** Sets the display name; an empty one (after trimming) clears the profile. */
+  async setDisplayName(name: string): Promise<Prefs> {
+    const value = displayName.parse(name);
+    return this.save({
+      ...(await this.get()),
+      profile: value === "" ? null : { displayName: value },
     });
   }
 

@@ -19,6 +19,7 @@ const basePrefs = {
   changesWidth: 480,
   lastWorkspace: null,
   recents: [] as string[],
+  profile: null as { displayName: string } | null,
 };
 
 type Handler = (
@@ -78,6 +79,10 @@ function setup(options: { request?: (method: string, params: unknown) => unknown
     prefs: {
       get: async () => ({ ...basePrefs }),
       set: async (patch) => ({ ...basePrefs, ...patch }),
+      setDisplayName: async (name) => ({
+        ...basePrefs,
+        profile: name === "" ? null : { displayName: name },
+      }),
       recordWorkspace: async (workspace) => {
         recorded.push(workspace);
         return { ...basePrefs, lastWorkspace: workspace };
@@ -276,6 +281,50 @@ describe("preferences", () => {
       ok: false,
       error: { code: "invalid_arguments" },
     });
+  });
+});
+
+describe("the profile", () => {
+  test("a valid name is trimmed and stored, and an empty one clears it", async () => {
+    const t = setup();
+    expect(await t.call(channels.profileSetDisplayName, { displayName: "  Ada  " })).toEqual({
+      ok: true,
+      value: { ...basePrefs, profile: { displayName: "Ada" } },
+    });
+    expect(await t.call(channels.profileSetDisplayName, { displayName: "   " })).toEqual({
+      ok: true,
+      value: { ...basePrefs, profile: null },
+    });
+  });
+
+  test("an invalid request is refused: long, control characters, wrong type, extra keys, no body", async () => {
+    const t = setup();
+    for (const bad of [
+      { displayName: "x".repeat(61) },
+      { displayName: "a\nb" },
+      { displayName: "a\u0000b" },
+      { displayName: 5 },
+      { displayName: "Ada", role: "admin" },
+      { displayName: "Ada", apiKey: "k" },
+      {},
+      undefined,
+    ]) {
+      expect(await t.call(channels.profileSetDisplayName, bad)).toMatchObject({
+        ok: false,
+        error: { code: "invalid_arguments" },
+      });
+    }
+  });
+
+  test("a request from a frame that is not the app's is refused", async () => {
+    const t = setup();
+    expect(
+      await t.call(
+        channels.profileSetDisplayName,
+        { displayName: "Ada" },
+        { url: "https://evil.example/" },
+      ),
+    ).toMatchObject({ ok: false });
   });
 });
 

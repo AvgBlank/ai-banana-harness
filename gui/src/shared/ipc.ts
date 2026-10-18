@@ -1,6 +1,7 @@
 // The strict argument schemas main validates before acting on a renderer call. The renderer
 // reaches them only through the frozen `window.banana` object (channel names: ./channels).
 import { z } from "zod";
+import { MAX_DISPLAY_NAME } from "./api";
 import { type MethodName, methods } from "./protocol";
 
 /** A failure that crosses the process boundary as `{ code, message }`, never as a stack trace. */
@@ -46,6 +47,14 @@ const MAX_ANSWER_BYTES = 64 * 1024;
 
 const path = z.string().min(1).max(MAX_STRING_LENGTH);
 
+/** Trimmed, at most 60 characters, no control characters; empty is allowed here and means "no profile". */
+export const displayName = z
+  .string()
+  .trim()
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: rejecting them is the point
+  .regex(/^[^\u0000-\u001f\u007f]*$/, "a name cannot contain control characters")
+  .max(MAX_DISPLAY_NAME);
+
 export const ipcArgs = {
   /** Unknown keys are dropped, not refused: a newer renderer may send more than main knows. */
   prefsPatch: z.object({
@@ -55,6 +64,7 @@ export const ipcArgs = {
     changesScope: z.enum(["turn", "workspace"]).optional(),
     changesWidth: z.number().int().min(360).max(760).optional(),
   }),
+  profileName: z.strictObject({ displayName }),
   keyForSession: z.strictObject({ key: z.string().trim().min(1).max(512) }),
   workspacePath: z.strictObject({ path }),
   liveAttach: z.strictObject({ workspace: path, sessionId: z.string().min(1).max(64) }),

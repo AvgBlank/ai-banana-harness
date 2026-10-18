@@ -14,6 +14,7 @@ const DEFAULT_PREFS: Prefs = {
   changesWidth: 480,
   lastWorkspace: null,
   recents: [],
+  profile: null,
 };
 
 async function start(): Promise<void> {

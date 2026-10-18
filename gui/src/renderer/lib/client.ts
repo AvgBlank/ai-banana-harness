@@ -30,6 +30,8 @@ export interface Client {
   appInfo(): Promise<AppInfo>;
   prefs(): Promise<Prefs>;
   setPrefs(patch: PrefsPatch): Promise<Prefs>;
+  /** Main trims and validates it; an empty name clears the profile. */
+  setDisplayName(displayName: string): Promise<Prefs>;
   keyStatus(): Promise<KeyStatus>;
   recheckKey(): Promise<KeyStatus>;
   /** Hands a typed key to main, which keeps it in memory and restarts the sidecar with it. */
@@ -83,6 +85,7 @@ export function clientFor(banana: BananaApi): Client {
     appInfo: () => banana.app.info(),
     prefs: () => banana.prefs.get(),
     setPrefs: (patch) => banana.prefs.set(patch),
+    setDisplayName: (name) => banana.profile.setDisplayName(name),
     keyStatus: () => banana.key.status(),
     recheckKey: () => banana.key.recheck(),
     setSessionKey: (key) => banana.key.setForSession(key),

@@ -73,6 +73,10 @@ _Avoid_: sandbox, sandbox provider
 The workspace's own `.banana-harness/config.toml`, the last layer of configuration; it can start programs, change guardrails and change where the API key is sent.
 _Avoid_: project config, local config
 
+**Profile**:
+The desktop app's local display name for this Mac, kept in its preferences file. It is not an account: it signs nothing in, is never sent to a provider or the sidecar, and is separate from the API key.
+_Avoid_: account, user, login
+
 **Restricted mode**:
 A workspace opened without loading its workspace config; the agent still works in the workspace, under the default and user-level settings.
 _Avoid_: safe mode, read-only mode

@@ -79,6 +79,7 @@ export const DEFAULT_PREFS: Prefs = {
   changesWidth: 480,
   lastWorkspace: null,
   recents: [],
+  profile: null,
 };
 
 export const PROVIDERS: ProviderOption[] = [
@@ -138,6 +139,9 @@ export function fakeClient(
     })),
     prefs: vi.fn(async () => stored),
     setPrefs: vi.fn(async (patch: PrefsPatch) => Object.assign(stored, patch)),
+    setDisplayName: vi.fn(async (name: string) =>
+      Object.assign(stored, { profile: name.trim() === "" ? null : { displayName: name.trim() } }),
+    ),
     keyStatus: vi.fn(async () => key),
     recheckKey: vi.fn(async () => {
       key = options.foundOnRecheck ?? key;

@@ -25,7 +25,7 @@ export interface IpcDeps {
   keys: Pick<KeyResolver, "status" | "resolve" | "setForSession">;
   known: KnownWorkspaces;
   live: Pick<LiveBuffers, "attach" | "clear" | "started">;
-  prefs: Pick<Preferences, "get" | "set" | "recordWorkspace">;
+  prefs: Pick<Preferences, "get" | "set" | "recordWorkspace" | "setDisplayName">;
   trustStore: TrustStore;
   /** Reads the workspace config for hashing; main's own reader unless a test supplies one. */
   readConfig?: (path: string) => Promise<ConfigFile>;
@@ -67,6 +67,13 @@ export function registerIpc(deps: IpcDeps): void {
   ipc.handle(
     channels.prefsSet,
     guarded(trust, ipcArgs.prefsPatch, (patch) => deps.prefs.set(patch)),
+  );
+
+  ipc.handle(
+    channels.profileSetDisplayName,
+    guarded(trust, ipcArgs.profileName, ({ displayName }) =>
+      deps.prefs.setDisplayName(displayName),
+    ),
   );
 
   ipc.handle(

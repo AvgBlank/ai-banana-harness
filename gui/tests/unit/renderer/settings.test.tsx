@@ -2,13 +2,17 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, test } from "vitest";
 import { App } from "@/App";
 import { ClientProvider } from "@/state/client-context";
+import type { Prefs } from "../../../src/shared/api";
 import { DEFAULT_PREFS, fakeClient, session } from "./fakes";
 
-async function openSettings(options: Parameters<typeof fakeClient>[0] = {}) {
+async function openSettings(
+  options: Parameters<typeof fakeClient>[0] = {},
+  prefs: Prefs = DEFAULT_PREFS,
+) {
   const client = fakeClient(options);
   render(
     <ClientProvider client={client}>
-      <App prefs={DEFAULT_PREFS} />
+      <App prefs={prefs} />
     </ClientProvider>,
   );
   await act(async () => undefined);
@@ -26,12 +30,13 @@ beforeEach(() => {
 });
 
 describe("settings", () => {
-  test("has appearance, the API key, trusted workspaces, shortcuts and about, in that order", async () => {
+  test("has the profile first, then appearance, the API key, trusted workspaces, shortcuts and about, in that order", async () => {
     await openSettings();
     const headings = within(screen.getByRole("main"))
       .getAllByRole("heading", { level: 2 })
       .map((h) => h.textContent);
     expect(headings).toEqual([
+      "Profile",
       "Appearance",
       "API key",
       "Command execution",
@@ -120,5 +125,69 @@ describe("Escape in dialogs", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(client.trustWorkspace).not.toHaveBeenCalled();
     expect(within(screen.getByRole("banner")).getByText("Restricted")).toBeTruthy();
+  });
+});
+
+describe("profile", () => {
+  const field = () => screen.getByLabelText("Display name") as HTMLInputElement;
+  const type = async (value: string, key: "blur" | "Enter" = "blur") => {
+    await act(async () => fireEvent.change(field(), { target: { value } }));
+    if (key === "Enter") {
+      await act(async () => field().focus());
+      await act(async () => fireEvent.keyDown(field(), { key: "Enter" }));
+    } else await act(async () => fireEvent.blur(field()));
+  };
+
+  test("starts empty with a placeholder avatar and no sidebar avatar", async () => {
+    await openSettings();
+    expect(field().value).toBe("");
+    expect(screen.queryByRole("button", { name: "Clear" })).toBeNull();
+    expect(screen.queryByRole("img", { name: /^Profile:/ })).toBeNull();
+  });
+
+  test("shows the saved name with its initial, in Settings and the sidebar", async () => {
+    await openSettings({}, { ...DEFAULT_PREFS, profile: { displayName: "ada" } });
+    expect(field().value).toBe("ada");
+    expect(screen.getByRole("img", { name: "Profile: ada" }).textContent).toBe("A");
+  });
+
+  test("saves on blur and on Enter, trimmed", async () => {
+    const client = await openSettings();
+    await type("  Ada  ");
+    expect(client.setDisplayName).toHaveBeenLastCalledWith("Ada");
+    expect(await screen.findByRole("img", { name: "Profile: Ada" })).toBeTruthy();
+    await type("Grace", "Enter");
+    expect(client.setDisplayName).toHaveBeenLastCalledWith("Grace");
+  });
+
+  test("a too-long name shows an error, is not sent, and the old name stays saved", async () => {
+    const client = await openSettings({}, { ...DEFAULT_PREFS, profile: { displayName: "Ada" } });
+    await type("x".repeat(61));
+    expect((await screen.findByRole("alert")).textContent).toMatch(/60/);
+    expect(client.setDisplayName).not.toHaveBeenCalled();
+    expect(screen.getByRole("img", { name: "Profile: Ada" })).toBeTruthy();
+  });
+
+  test("a refusal from main is shown", async () => {
+    const client = await openSettings();
+    client.setDisplayName.mockRejectedValueOnce({ code: "invalid_arguments", message: "refused" });
+    await type("Ada");
+    expect((await screen.findByRole("alert")).textContent).toContain("refused");
+  });
+
+  test("Clear, and an empty name, go back to no profile", async () => {
+    const client = await openSettings({}, { ...DEFAULT_PREFS, profile: { displayName: "Ada" } });
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Clear" })));
+    expect(client.setDisplayName).toHaveBeenLastCalledWith("");
+    expect(field().value).toBe("");
+    expect(screen.queryByRole("img", { name: /^Profile:/ })).toBeNull();
+  });
+
+  test("never mentions the API key and shows no key value", async () => {
+    await openSettings({}, { ...DEFAULT_PREFS, profile: { displayName: "Ada" } });
+    const section = screen
+      .getByRole("heading", { name: "Profile" })
+      .closest("section") as HTMLElement;
+    expect(section.textContent).not.toMatch(/key|token/i);
   });
 });

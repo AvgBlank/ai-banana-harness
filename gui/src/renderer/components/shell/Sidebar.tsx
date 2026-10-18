@@ -12,9 +12,10 @@ import { useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
-import { folderName, relativeTime } from "@/lib/format";
+import { folderName, initialOf, relativeTime } from "@/lib/format";
 import { groupByWorkspace, type SessionsData } from "@/state/sessions";
 import { useApp } from "@/state/store";
+import type { Profile } from "../../../shared/api";
 import type { Session } from "../../../shared/protocol";
 
 /** The inline rename field; it takes focus because the user just asked to rename. */
@@ -49,6 +50,7 @@ export function Sidebar({
   data,
   now,
   canOpen,
+  profile,
   restricted,
   onOpenFolder,
   onSelect,
@@ -57,6 +59,7 @@ export function Sidebar({
   data: SessionsData;
   now: number;
   canOpen: boolean;
+  profile: Profile | null;
   /** Workspaces with a config that is not trusted, so they run restricted. */
   restricted: ReadonlySet<string>;
   onOpenFolder: () => void;
@@ -84,6 +87,16 @@ export function Sidebar({
           {appName}
           <ChevronDown size={15} className="text-faint" />
         </div>
+        {profile && (
+          <span
+            role="img"
+            aria-label={`Profile: ${profile.displayName}`}
+            title={profile.displayName}
+            className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-accent-soft text-[11px] font-semibold text-accent"
+          >
+            {initialOf(profile.displayName)}
+          </span>
+        )}
         <Tooltip label="Search sessions">
           <button
             type="button"

@@ -4,6 +4,7 @@ export const channels = {
   appInfo: "banana:app:info",
   prefsGet: "banana:prefs:get",
   prefsSet: "banana:prefs:set",
+  profileSetDisplayName: "banana:profile:set-display-name",
   workspacePick: "banana:workspace:pick",
   workspaceOpen: "banana:workspace:open",
   workspaceClose: "banana:workspace:close",
