@@ -6,11 +6,12 @@ use std::sync::Arc;
 
 use harness_llm::ToolDefinition;
 use harness_tools::{
-    AskOverrides, HostToolRequest, PermissionConfig, ToolContext, ToolResult, ToolsConfig,
-    sanitize_name, strip_schema,
+    AskOverrides, CancelToken, HostRunner, HostToolRequest, PermissionConfig, ToolContext,
+    ToolResult, ToolsConfig, sanitize_name, strip_schema,
 };
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
+use tokio_util::sync::CancellationToken;
 
 use crate::mcp::{McpAuthNotifier, McpRegistry, McpTarget};
 
@@ -20,6 +21,9 @@ pub(crate) struct ToolInvocation<'a> {
     /// Where a remote MCP server's OAuth login URL is reported the moment it starts. Owned
     /// (not borrowed) so a call can move into its own `tokio::spawn`ed task.
     pub mcp_auth: McpAuthNotifier,
+    /// The turn's cancellation: a running host command stops when it fires. Owned, like
+    /// `mcp_auth`, so a call can move into its own task.
+    pub cancel: CancellationToken,
 }
 
 /// Where a tool call goes. Closed set, dispatched by `match`.
@@ -195,6 +199,7 @@ impl TurnTools {
             name,
             arguments_json,
             mcp_auth,
+            cancel,
         } = invocation;
         match self.routes.get(name) {
             // An unknown name goes to the host tools, which report it as unknown.
@@ -207,8 +212,22 @@ impl TurnTools {
                 let tools_config = self.tools_config.clone();
                 let permission = self.permission.clone();
                 let ask_overrides = Arc::clone(&self.ask_overrides);
+                // The blocking call polls this flag; the turn's token is async, so a watcher sets
+                // it. A turn cancelled before the call starts sets it up front, and the watcher
+                // is dropped as soon as the call is over.
+                let stop = CancelToken::new();
+                if cancel.is_cancelled() {
+                    stop.cancel();
+                }
+                let watcher = tokio::spawn({
+                    let (stop, cancel) = (stop.clone(), cancel.clone());
+                    async move {
+                        cancel.cancelled().await;
+                        stop.cancel();
+                    }
+                });
                 // Blocking filesystem/process work, on its own OS thread so calls run in parallel.
-                tokio::task::spawn_blocking(move || {
+                let result = tokio::task::spawn_blocking(move || {
                     let once;
                     let ask_overrides: &AskOverrides = match &once_override {
                         Some((key, pattern)) => {
@@ -224,6 +243,8 @@ impl TurnTools {
                         permission: &permission,
                         hidden_env: &[crate::API_KEY_ENV],
                         ask_overrides,
+                        runner: &HostRunner,
+                        cancel: &stop,
                     };
                     harness_tools::call_by_name(
                         &ctx,
@@ -234,7 +255,9 @@ impl TurnTools {
                     )
                 })
                 .await
-                .unwrap_or_else(|e| ToolResult::error(format!("tool task failed: {e}")))
+                .unwrap_or_else(|e| ToolResult::error(format!("tool task failed: {e}")));
+                watcher.abort();
+                result
             }
             Some(ToolSource::Mcp { server, tool }) => {
                 // Bad or empty JSON becomes `{}`, and the server validates what it gets.

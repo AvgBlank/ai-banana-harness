@@ -12,6 +12,7 @@ mod guardrail;
 mod large_output;
 pub mod pattern;
 mod read_file;
+mod runner;
 mod write_file;
 
 use std::collections::HashSet;
@@ -22,6 +23,7 @@ use serde_json::Value;
 use similar::TextDiff;
 
 pub use guardrail::{Action, AskOverrides, AskRequest, PermissionConfig, Rules};
+pub use runner::{CancelToken, CommandOutput, CommandRequest, CommandRunner, Finish, HostRunner};
 
 /// The `[tools]` config section.
 #[derive(Clone, Debug, Deserialize)]
@@ -41,6 +43,10 @@ pub struct ToolContext<'a> {
     pub hidden_env: &'a [&'a str],
     /// `ask` rules already resolved to allow, in memory only; see [`AskOverrides`].
     pub ask_overrides: &'a AskOverrides,
+    /// How `bash` commands are run.
+    pub runner: &'a dyn CommandRunner,
+    /// Set when the turn is cancelled; a running command stops.
+    pub cancel: &'a CancelToken,
 }
 
 impl ToolContext<'_> {

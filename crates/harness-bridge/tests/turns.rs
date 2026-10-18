@@ -369,6 +369,85 @@ async fn shutdown_cancels_running_turns_and_flushes_their_closing_frames() {
 }
 
 #[tokio::test]
+async fn shutdown_stops_a_running_command_before_the_sidecar_exits() {
+    let (mut run, _) = Run::for_scenario("plain-answer").await;
+    run.stub.reset();
+    run.stub
+        .push_spec(&tool_call(
+            "c1",
+            "bash",
+            json!({"command": "echo $$ > shell.pid; sleep 30 & echo $! > job.pid; wait"}),
+        ))
+        .unwrap();
+    let session = run.open_and_create().await;
+    let workspace = run.workspace();
+    run.start_turn(&session, "go").await;
+    // The test environment asks before running a command; allow it.
+    let approval = run.event("tool.approval_required").await;
+    run.call(
+        "action.reply",
+        json!({"workspace": workspace, "session_id": session,
+               "action_id": approval["event"]["action_id"], "answer": "allow"}),
+    )
+    .await;
+    let pids: Vec<u32> = {
+        let mut found = Vec::new();
+        for name in ["shell.pid", "job.pid"] {
+            let path = run.env.workspace().join(name);
+            let deadline = std::time::Instant::now() + Duration::from_secs(20);
+            let pid = loop {
+                if let Some(pid) = std::fs::read_to_string(&path)
+                    .ok()
+                    .and_then(|text| text.trim().parse().ok())
+                {
+                    break pid;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "{name} never appeared"
+                );
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            };
+            found.push(pid);
+        }
+        found
+    };
+
+    run.client.send("bye", "shutdown", json!({})).await;
+    let started = std::time::Instant::now();
+    let mut cancelled = false;
+    while let Some(frame) = run.client.try_next().await {
+        if frame["kind"] == "event" && frame["event"]["type"] == "turn.done" {
+            cancelled = frame["event"]["state"] == "cancelled";
+        }
+    }
+    run.client.finish().await.unwrap();
+    // The command's own 30 s must not be what the shutdown waited for.
+    assert!(cancelled, "the running turn did not end cancelled");
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "{:?}",
+        started.elapsed()
+    );
+    for pid in pids {
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap()
+            .success()
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "process {pid} outlived the shutdown"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+}
+
+#[tokio::test]
 async fn an_untrusted_workspace_config_cannot_start_an_mcp_command_during_a_turn() {
     let mut results = Vec::new();
     for trusted in [false, true] {

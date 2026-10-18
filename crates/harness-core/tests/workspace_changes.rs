@@ -254,26 +254,29 @@ async fn writing_outside_the_workspace_is_blocked() {
 async fn a_command_past_its_timeout_is_killed_with_its_process_group() {
     let t = TestHarness::open(Provider::DeepSeek).await;
     let started = Instant::now();
-    // The background job shares the process group, so the kill must take it down too.
+    // The background job shares the process group, so the kill must take it down too. The
+    // timeout counts from the spawn, login-shell start-up included (about 0.5 to 1 s on a
+    // developer Mac), so it is long enough for `started` to be printed before it fires.
     let (content, blocked) = single_call(
         &t,
         "bash",
-        json!({"command": "(sleep 2; touch late.txt) & echo started; sleep 30", "timeout_secs": 1}),
+        json!({"command": "(sleep 5; touch late.txt) & echo started; sleep 30", "timeout_secs": 3}),
     )
     .await;
 
     assert!(!blocked);
     assert!(
-        started.elapsed() < Duration::from_secs(8),
+        started.elapsed() < Duration::from_secs(10),
         "{:?}",
         started.elapsed()
     );
     assert!(
-        content.starts_with("timed out after 1s; process group killed\n"),
+        content.starts_with("timed out after 3s; process group killed\n"),
         "{content}"
     );
     assert!(content.ends_with("started\n"), "{content}");
-    tokio::time::sleep(Duration::from_millis(2500)).await;
+    // Past the moment the background job would have written its file had it survived.
+    tokio::time::sleep(Duration::from_millis(5500)).await;
     assert!(!t.workspace.join("late.txt").exists());
 }
 

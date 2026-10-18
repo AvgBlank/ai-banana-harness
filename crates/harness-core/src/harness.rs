@@ -874,6 +874,7 @@ impl TurnRunner {
             name: &call.name,
             arguments_json: &call.arguments,
             mcp_auth: mcp_auth.clone(),
+            cancel: self.cancel.clone(),
         };
         let result = tools.call(invocation(), None).await;
         let Some(ask) = result.needs_approval.clone() else {
