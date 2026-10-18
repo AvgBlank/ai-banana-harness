@@ -61,6 +61,14 @@ _Avoid_: backend, vendor
 The repository directory the agent reads, edits and runs commands in; the agent's tools cannot reach outside it. The desktop app can have several open at once, each served by its own harness.
 _Avoid_: sandbox, project dir, cwd
 
+**Command runner**:
+What runs a `bash` tool command: the host runner runs it on this machine in its own process group; the container runner runs it in a container made for that one command. Both stop a running command when the turn is cancelled or the command's timeout passes.
+_Avoid_: executor, shell backend
+
+**Container runner**:
+The command runner that isolates a command in a container with the workspace mounted, no network and no API key. It isolates commands only; the harness and the file tools stay on the host, and it is not a sandbox for the agent (ADR 0004).
+_Avoid_: sandbox, sandbox provider
+
 **Workspace config**:
 The workspace's own `.banana-harness/config.toml`, the last layer of configuration; it can start programs, change guardrails and change where the API key is sent.
 _Avoid_: project config, local config

@@ -31,7 +31,10 @@ pub use harness::{
 pub use harness_llm::Usage;
 pub use harness_mcp::{McpServerConfig, McpTransport};
 pub use harness_store::{Session, Store};
-pub use harness_tools::{Action as PermissionAction, PermissionConfig, Rules as PatternRules};
+pub use harness_tools::{
+    Action as PermissionAction, ContainerConfig, ContainerNetwork, PermissionConfig,
+    Rules as PatternRules,
+};
 pub use mcp::{McpServerState, McpServerStatus};
 pub use skills::{LoadedSkills, Skill};
 

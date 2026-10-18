@@ -47,7 +47,7 @@ pub fn call(ctx: &ToolContext<'_>, arguments: &Value) -> ToolResult {
     match ctx.runner.run(&request) {
         Ok(done) => ToolResult::ok(format!(
             "{}\n{}",
-            header(done.finish, timeout_secs),
+            header(done.finish, done.kill_scope, timeout_secs),
             done.output
         )),
         Err(e) => ToolResult::error(format!("running bash: {e}")),
@@ -55,12 +55,15 @@ pub fn call(ctx: &ToolContext<'_>, arguments: &Value) -> ToolResult {
 }
 
 /// The first line of the result: how the command ended.
-fn header(finish: Finish, timeout_secs: u64) -> String {
+fn header(finish: Finish, kill_scope: &str, timeout_secs: u64) -> String {
     match finish {
         Finish::Exited(code) => format!("exit code: {code}"),
         Finish::Signaled(signal) => format!("killed by signal {signal}"),
         Finish::Unknown => "exit code: unknown".to_string(),
-        Finish::TimedOut => format!("timed out after {timeout_secs}s; process group killed"),
+        Finish::TimedOut => format!("timed out after {timeout_secs}s; {kill_scope} killed"),
         Finish::Cancelled => "cancelled; command stopped".to_string(),
+        Finish::OutOfMemory => {
+            "killed: it used more memory than the limit it runs under".to_string()
+        }
     }
 }

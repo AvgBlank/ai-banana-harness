@@ -30,6 +30,14 @@ jobs:
       - run: make lint
       # Without AI_API_KEY, `make test` runs the offline suite and skips the live smoke.
       - run: make test
+      # The container runner against a real Docker daemon (Linux, where uid mapping is literal).
+      - name: Container runner against Docker
+        if: runner.os == 'Linux'
+        env:
+          BANANA_TEST_DOCKER_IMAGE: debian:bookworm-slim
+        run: |
+          docker pull "$BANANA_TEST_DOCKER_IMAGE"
+          cargo test -p harness-tools --test container_docker --locked -- --ignored
 
   # The development container: the image builds, and the repository's lint passes inside it.
   dev-container:

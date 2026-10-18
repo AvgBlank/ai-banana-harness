@@ -5,6 +5,7 @@
 //! [`sanitize_name`]/[`strip_schema`]/[`ToolResult`].
 
 mod bash;
+mod container;
 mod edit;
 mod glob_tool;
 mod grep_tool;
@@ -22,6 +23,9 @@ use serde::Deserialize;
 use serde_json::Value;
 use similar::TextDiff;
 
+pub use container::{
+    COMMAND_LABEL, ContainerConfig, ContainerNetwork, ContainerRunner, OWNER_LABEL,
+};
 pub use guardrail::{Action, AskOverrides, AskRequest, PermissionConfig, Rules};
 pub use runner::{CancelToken, CommandOutput, CommandRequest, CommandRunner, Finish, HostRunner};
 

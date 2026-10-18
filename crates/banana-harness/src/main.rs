@@ -110,6 +110,7 @@ async fn headless(
         api_key,
         workspace,
         headless: true,
+        container: None,
     })?;
     let session_id = harness.create_session()?;
     let mut turn = harness.start_turn(&session_id, task);

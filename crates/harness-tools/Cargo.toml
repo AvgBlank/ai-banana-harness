@@ -17,6 +17,7 @@ libc.workspace = true
 similar.workspace = true
 
 [dev-dependencies]
+harness-testkit.workspace = true
 tempfile.workspace = true
 
 [lints]

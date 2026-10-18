@@ -10,10 +10,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
-const POLL_INTERVAL: Duration = Duration::from_millis(10);
+pub(crate) const POLL_INTERVAL: Duration = Duration::from_millis(10);
 /// How long to wait for the output pipe to close once the process group is gone; a process
 /// that detached into its own session could otherwise hold it open forever.
-const DRAIN_GRACE: Duration = Duration::from_secs(1);
+pub(crate) const DRAIN_GRACE: Duration = Duration::from_secs(1);
 
 /// Stops the tool call that holds a clone of it. A plain shared flag, so it needs no async
 /// runtime and the owner of the turn can set it from any thread.
@@ -55,11 +55,15 @@ pub enum Finish {
     Unknown,
     TimedOut,
     Cancelled,
+    /// The command was killed for passing the memory limit it was run under.
+    OutOfMemory,
 }
 
 #[derive(Debug)]
 pub struct CommandOutput {
     pub finish: Finish,
+    /// What a timeout or a cancel kills, for the message: "process group" or "container".
+    pub kill_scope: &'static str,
     /// Stdout and stderr interleaved, as a terminal would show them.
     pub output: String,
 }
@@ -79,6 +83,7 @@ impl CommandRunner for HostRunner {
         if request.cancel.is_cancelled() {
             return Ok(CommandOutput {
                 finish: Finish::Cancelled,
+                kill_scope: "process group",
                 output: String::new(),
             });
         }
@@ -142,7 +147,11 @@ impl CommandRunner for HostRunner {
         }
         let _ = done_rx.recv_timeout(DRAIN_GRACE);
         let output = lock(&capture).render();
-        Ok(CommandOutput { finish, output })
+        Ok(CommandOutput {
+            finish,
+            kill_scope: "process group",
+            output,
+        })
     }
 }
 
@@ -165,7 +174,7 @@ fn kill_group(pid: u32) {
     }
 }
 
-fn lock(capture: &Mutex<Capture>) -> std::sync::MutexGuard<'_, Capture> {
+pub(crate) fn lock(capture: &Mutex<Capture>) -> std::sync::MutexGuard<'_, Capture> {
     capture
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -173,7 +182,7 @@ fn lock(capture: &Mutex<Capture>) -> std::sync::MutexGuard<'_, Capture> {
 
 /// Keeps the first and last half of the byte cap and counts what falls in between, so memory
 /// stays bounded however much a command prints.
-struct Capture {
+pub(crate) struct Capture {
     half: usize,
     head: Vec<u8>,
     tail: VecDeque<u8>,
@@ -181,7 +190,7 @@ struct Capture {
 }
 
 impl Capture {
-    fn new(max_bytes: usize) -> Self {
+    pub(crate) fn new(max_bytes: usize) -> Self {
         Self {
             half: max_bytes / 2,
             head: Vec::new(),
@@ -190,7 +199,7 @@ impl Capture {
         }
     }
 
-    fn push(&mut self, bytes: &[u8]) {
+    pub(crate) fn push(&mut self, bytes: &[u8]) {
         let room = self.half.saturating_sub(self.head.len()).min(bytes.len());
         let (head, rest) = bytes.split_at(room);
         self.head.extend_from_slice(head);
@@ -200,7 +209,7 @@ impl Capture {
         self.dropped += excess;
     }
 
-    fn render(&self) -> String {
+    pub(crate) fn render(&self) -> String {
         let mut tail = Vec::with_capacity(self.tail.len());
         tail.extend(self.tail.iter());
         if self.dropped == 0 {

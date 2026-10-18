@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use harness_llm::ToolDefinition;
 use harness_tools::{
-    AskOverrides, CancelToken, HostRunner, HostToolRequest, PermissionConfig, ToolContext,
+    AskOverrides, CancelToken, CommandRunner, HostToolRequest, PermissionConfig, ToolContext,
     ToolResult, ToolsConfig, sanitize_name, strip_schema,
 };
 use serde::Deserialize;
@@ -106,6 +106,15 @@ struct MetaArgs {
     input: Map<String, Value>,
 }
 
+/// What host tool calls share for the harness's lifetime, across every turn.
+#[derive(Clone)]
+pub(crate) struct HostShared {
+    /// `ask` rules allowed "for session".
+    pub(crate) ask_overrides: Arc<AskOverrides>,
+    /// Where `bash` commands run.
+    pub(crate) runner: Arc<dyn CommandRunner>,
+}
+
 pub(crate) struct TurnTools {
     pub(crate) definitions: Vec<ToolDefinition>,
     routes: HashMap<String, ToolSource>,
@@ -113,9 +122,7 @@ pub(crate) struct TurnTools {
     workspace: PathBuf,
     tools_config: ToolsConfig,
     permission: PermissionConfig,
-    /// `ask` rules allowed "for session"; lives as long as the harness (shared across turns),
-    /// not just this one.
-    ask_overrides: Arc<AskOverrides>,
+    host: HostShared,
 }
 
 impl TurnTools {
@@ -126,7 +133,7 @@ impl TurnTools {
         workspace: PathBuf,
         tools_config: ToolsConfig,
         permission: PermissionConfig,
-        ask_overrides: Arc<AskOverrides>,
+        host: HostShared,
         builtin_definitions: &[ToolDefinition],
         mcp_auth: McpAuthNotifier,
     ) -> Self {
@@ -178,13 +185,13 @@ impl TurnTools {
             workspace,
             tools_config,
             permission,
-            ask_overrides,
+            host,
         }
     }
 
     /// Allows an `ask` rule for the rest of the harness's lifetime (not just this turn).
     pub(crate) fn allow_for_session(&self, key: &str, pattern: &str) {
-        self.ask_overrides.allow(key, pattern);
+        self.host.ask_overrides.allow(key, pattern);
     }
 
     /// `once_override` bypasses one specific `ask` rule for this single call, without
@@ -211,7 +218,8 @@ impl TurnTools {
                 );
                 let tools_config = self.tools_config.clone();
                 let permission = self.permission.clone();
-                let ask_overrides = Arc::clone(&self.ask_overrides);
+                let ask_overrides = Arc::clone(&self.host.ask_overrides);
+                let runner = Arc::clone(&self.host.runner);
                 // The blocking call polls this flag; the turn's token is async, so a watcher sets
                 // it. A turn cancelled before the call starts sets it up front, and the watcher
                 // is dropped as soon as the call is over.
@@ -243,7 +251,7 @@ impl TurnTools {
                         permission: &permission,
                         hidden_env: &[crate::API_KEY_ENV],
                         ask_overrides,
-                        runner: &HostRunner,
+                        runner: &*runner,
                         cancel: &stop,
                     };
                     harness_tools::call_by_name(

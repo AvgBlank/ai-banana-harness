@@ -160,6 +160,7 @@ fn harness_with(config: Config) -> (tempfile::TempDir, Harness) {
         api_key: TEST_API_KEY.to_string(),
         workspace: dir.path().to_path_buf(),
         headless: false,
+        container: None,
     })
     .unwrap();
     (dir, harness)

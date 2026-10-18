@@ -14,7 +14,10 @@ use harness_llm::{
 use harness_store::{
     FinishTurn, NewCheckpoint, NewEvent, NewSession, NewTurn, Session, Store, UpsertThread,
 };
-use harness_tools::{AskOverrides, AskRequest, ToolResult};
+use harness_tools::{
+    AskOverrides, AskRequest, CommandRunner, ContainerConfig, ContainerRunner, HostRunner,
+    ToolResult,
+};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Semaphore, mpsc, oneshot};
 use tokio::task::JoinSet;
@@ -31,7 +34,7 @@ use crate::instructions::{SystemPromptInput, system_prompt};
 use crate::mcp::{McpAuthNotifier, McpRegistry, McpServerStatus};
 use crate::safety::{DoomLoop, DoomLoopAction, TurnLimits};
 use crate::skills::load_skills;
-use crate::tools::{ToolInvocation, TurnTools};
+use crate::tools::{HostShared, ToolInvocation, TurnTools};
 
 /// How a required action was resolved; see [`TurnHandle::reply`]. On the wire it is `"allow"`,
 /// `"allow_for_session"`, `"deny"` or `{"text": "..."}`.
@@ -84,6 +87,10 @@ pub struct HarnessOptions {
     /// A headless run has no one to answer a required action: questions are auto-answered and
     /// `ask` rules resolve to deny, both without waiting.
     pub headless: bool,
+    /// Run `bash` commands in a container per command instead of on the host. `None` (the
+    /// default everywhere) runs them on the host. Opening with `Some` first removes containers
+    /// an earlier, killed sidecar left behind.
+    pub container: Option<ContainerConfig>,
 }
 
 /// The in-process agent harness. Both surfaces drive it only through `start_turn` and the handle.
@@ -103,7 +110,7 @@ struct Inner {
     /// Lives as long as the harness, so a server connected in one turn is reused by the next.
     mcp: Arc<McpRegistry>,
     /// `ask` rules allowed "for session"; lives as long as the harness, across every turn.
-    ask_overrides: Arc<AskOverrides>,
+    host: HostShared,
     headless: bool,
 }
 
@@ -189,6 +196,15 @@ impl Harness {
             seed: provider_config.seed,
             max_tokens: provider_config.max_output,
         })?;
+        let runner: Arc<dyn CommandRunner> = match options.container {
+            Some(config) => {
+                let runner = ContainerRunner::new(config);
+                // Best effort: if Docker is down the first command says so.
+                let _ = runner.sweep_leftovers();
+                Arc::new(runner)
+            }
+            None => Arc::new(HostRunner),
+        };
         let store = Arc::new(options.store);
         let mcp = McpRegistry::new(
             &options.config.mcp,
@@ -205,7 +221,10 @@ impl Harness {
                 api_key: options.api_key.clone(),
                 workspace: options.workspace,
                 redactor: Redactor::new(&options.api_key),
-                ask_overrides: Arc::new(AskOverrides::new()),
+                host: HostShared {
+                    ask_overrides: Arc::new(AskOverrides::new()),
+                    runner,
+                },
                 headless: options.headless,
             }),
         })
@@ -542,7 +561,7 @@ impl TurnRunner {
                 inner.workspace.clone(),
                 inner.config.tools.clone(),
                 inner.config.permission.clone(),
-                Arc::clone(&inner.ask_overrides),
+                inner.host.clone(),
                 &builtin_definitions,
                 notifier,
             )) => {
