@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use harness_core::{
-    Config, ConfigPaths, ContainerConfig, Event, EventKind, Harness, HarnessOptions, Provider,
-    Store,
+    CommandRunnerConfig, Config, ConfigPaths, ContainerConfig, Event, EventKind, Harness,
+    HarnessOptions, Provider, Store,
 };
 use harness_testkit::{FakeProvider, TEST_API_KEY};
 use tempfile::TempDir;
@@ -73,22 +73,18 @@ impl TestHarness {
     }
 
     async fn open_with(provider: Provider, config: Config, headless: bool) -> Self {
-        Self::open_inner(provider, config, headless, None).await
+        Self::open_inner(provider, config, headless).await
     }
 
     /// Like [`open`](Self::open), with `bash` commands run through the container runner.
     pub async fn open_container(provider: Provider, container: ContainerConfig) -> Self {
         let mut config = Config::embedded_default().unwrap();
         config.skills.paths.clear();
-        Self::open_inner(provider, config, false, Some(container)).await
+        config.command_runner = CommandRunnerConfig::Container(container);
+        Self::open_inner(provider, config, false).await
     }
 
-    async fn open_inner(
-        provider: Provider,
-        mut config: Config,
-        headless: bool,
-        container: Option<ContainerConfig>,
-    ) -> Self {
+    async fn open_inner(provider: Provider, mut config: Config, headless: bool) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().join("workspace");
         std::fs::create_dir_all(&workspace).unwrap();
@@ -115,7 +111,6 @@ impl TestHarness {
             api_key: TEST_API_KEY.to_string(),
             workspace: workspace.clone(),
             headless,
-            container,
         })
         .unwrap();
         Self {
@@ -153,7 +148,6 @@ impl TestHarness {
             api_key: TEST_API_KEY.to_string(),
             workspace: self.workspace.clone(),
             headless: false,
-            container: None,
         })
         .unwrap()
     }

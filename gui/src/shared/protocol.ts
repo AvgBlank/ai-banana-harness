@@ -159,6 +159,13 @@ export const methods = {
         loaded: z.boolean(),
         path: z.string(),
       }),
+      /** Where `bash` commands run, and why a container cannot run them now. */
+      command_runner: z.object({
+        kind: z.enum(["host", "container"]),
+        image: z.string().nullable(),
+        network: z.enum(["none", "bridge"]).nullable(),
+        problem: z.string().nullable(),
+      }),
     }),
   },
   "workspace.close": { params: workspaceParams, result: empty },

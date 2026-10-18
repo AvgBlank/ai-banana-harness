@@ -42,6 +42,16 @@ export async function readConfig(path: string): Promise<ConfigFile> {
 type Table = Record<string, unknown>;
 const isTable = (value: unknown): value is Table =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** The keys set under `prefix`, written `prefix.key`, one per leaf value. */
+function dottedKeys(value: unknown, prefix: string): string[] {
+  if (value === undefined) return [];
+  if (!isTable(value)) return [prefix];
+  const keys = Object.entries(value).flatMap(([key, inner]) =>
+    dottedKeys(inner, `${prefix}.${key}`),
+  );
+  return keys.length > 0 ? keys : [prefix];
+}
 const text = (value: unknown): string => (typeof value === "string" ? value : String(value));
 
 /**
@@ -114,5 +124,9 @@ export function summarize(
   if ("tools" in config) other.push("tools");
   if (isTable(config.skills) && "paths" in config.skills) other.push("skills.paths");
 
-  return { summary: { mcp, permissions, providers, other }, error: null };
+  // Where commands run (`[tools.bash]`) is read from the user's own config only: whatever the
+  // workspace sets there is ignored by the sidecar, and the dialog says so.
+  const ignored = dottedKeys(isTable(config.tools) ? config.tools.bash : undefined, "tools.bash");
+
+  return { summary: { mcp, permissions, providers, other, ignored }, error: null };
 }

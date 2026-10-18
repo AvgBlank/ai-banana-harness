@@ -182,7 +182,6 @@ fn build(
         api_key,
         workspace: canonical.clone(),
         headless: false,
-        container: None,
     })
     .context("opening the harness")?;
     Ok(OpenWorkspace {

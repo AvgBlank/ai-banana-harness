@@ -1,4 +1,4 @@
-import type { OpenedWorkspace, TrustReview } from "../../shared/api";
+import type { CommandRunnerInfo, OpenedWorkspace, TrustReview, TrustState } from "../../shared/api";
 import { IpcError } from "../../shared/ipc";
 import type { SidecarSupervisor } from "../sidecar/supervisor";
 import { checkDestinations, type Destination, originOf } from "./hostcheck";
@@ -13,6 +13,30 @@ export interface TrustFlowDeps {
   /** Told whenever a workspace becomes open or closed, so main's open list stays right. */
   opened: (workspace: string, open: boolean) => void;
 }
+
+/** The sidecar's answer to an open, as the app sees it. */
+interface OpenAnswer {
+  workspace: string;
+  command_runner: {
+    kind: "host" | "container";
+    image: string | null;
+    network: "none" | "bridge" | null;
+    problem: string | null;
+  };
+}
+
+const runnerOf = (answer: OpenAnswer): CommandRunnerInfo => ({
+  kind: answer.command_runner.kind,
+  image: answer.command_runner.image,
+  network: answer.command_runner.network,
+  problem: answer.command_runner.problem,
+});
+
+const outcome = (answer: OpenAnswer, trust: TrustState): OpenedWorkspace => ({
+  workspace: answer.workspace,
+  trust,
+  commandRunner: runnerOf(answer),
+});
 
 const BLOCKED = "Blocked: this folder's config changes where your API key is sent.";
 
@@ -31,12 +55,12 @@ export class WorkspaceTrust {
   async open(path: string): Promise<OpenedWorkspace> {
     const first = await this.openRestricted(path);
     const config = first.workspace_config;
-    if (!config.present) return { workspace: first.workspace, trust: "none" };
+    if (!config.present) return outcome(first, "none");
     // An open workspace keeps the config it was opened with, even when the file changed since.
-    if (config.loaded) return { workspace: first.workspace, trust: "trusted" };
+    if (config.loaded) return outcome(first, "trusted");
 
     const file = await this.read(config.path);
-    if (!file.ok) return { workspace: first.workspace, trust: "unreadable" };
+    if (!file.ok) return outcome(first, "unreadable");
     const entry = await this.deps.store.get(first.workspace);
     const matches = entry?.configSha256 === file.sha256;
     if (matches && !(await this.turnRunning(first.workspace))) {
@@ -44,12 +68,12 @@ export class WorkspaceTrust {
         return await this.upgrade({ workspace: first.workspace, approved: entry.approvedHosts });
       } catch (error) {
         if (error instanceof IpcError && error.code === "config_invalid") {
-          return { workspace: first.workspace, trust: "unreadable" };
+          return outcome(first, "unreadable");
         }
         throw error;
       }
     }
-    return { workspace: first.workspace, trust: "needs_review" };
+    return outcome(first, "needs_review");
   }
 
   async review(path: string): Promise<TrustReview> {
@@ -77,7 +101,7 @@ export class WorkspaceTrust {
   }): Promise<OpenedWorkspace> {
     const first = await this.openRestricted(options.path);
     const { workspace } = first;
-    if (first.workspace_config.loaded) return { workspace, trust: "trusted" };
+    if (first.workspace_config.loaded) return outcome(first, "trusted");
     const file = await this.read(first.workspace_config.path);
     if (!file.ok)
       throw new IpcError("config_unreadable", `the config cannot be read (${file.reason})`);
@@ -139,8 +163,12 @@ export class WorkspaceTrust {
     }
     const baseline = await this.destinations(workspace);
     await this.deps.request("workspace.close", { workspace });
+    let reopened: OpenAnswer;
     try {
-      await this.deps.request("workspace.open", { path: workspace, trust_workspace_config: true });
+      reopened = await this.deps.request("workspace.open", {
+        path: workspace,
+        trust_workspace_config: true,
+      });
     } catch (error) {
       // The config did not load; the folder stays usable, restricted.
       await this.deps.request("workspace.open", { path: workspace, trust_workspace_config: false });
@@ -156,6 +184,6 @@ export class WorkspaceTrust {
       this.deps.opened(workspace, false);
       throw new IpcError("blocked_config", BLOCKED);
     }
-    return { workspace, trust: "trusted" };
+    return outcome(reopened, "trusted");
   }
 }

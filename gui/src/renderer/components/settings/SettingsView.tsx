@@ -7,7 +7,13 @@ import { cn } from "@/lib/cn";
 import { folderName } from "@/lib/format";
 import { useClient } from "@/state/client-context";
 import { type Theme, useApp } from "@/state/store";
-import type { AppInfo, KeyStatus, OpenedWorkspace, TrustedWorkspace } from "../../../shared/api";
+import type {
+  AppInfo,
+  CommandRunnerInfo,
+  KeyStatus,
+  OpenedWorkspace,
+  TrustedWorkspace,
+} from "../../../shared/api";
 
 /** Fixed colours on purpose: each card previews its own theme regardless of the active one. */
 const PREVIEWS: Record<
@@ -259,12 +265,59 @@ function TrustedWorkspaces({
   );
 }
 
+/** Read-only: where commands run is set in the user's own config file, never from the app. */
+function CommandExecution({ runner }: { runner: CommandRunnerInfo | null }) {
+  const container = runner?.kind === "container";
+  return (
+    <Block
+      title="Command execution"
+      hint="Where the agent's shell commands run. File tools and the app itself always run on this Mac."
+    >
+      <div className="rounded-[12px] border border-line bg-s1 p-4 text-[13px]">
+        {runner === null ? (
+          <p className="text-muted">Open a workspace to see how it runs commands.</p>
+        ) : (
+          <>
+            <p className="flex items-center gap-2 font-medium">
+              {container ? "Container" : "This Mac"}
+              {container && runner.problem && <Badge>Unavailable</Badge>}
+            </p>
+            {container ? (
+              <dl className="mt-2 grid grid-cols-[88px_1fr] gap-y-1 text-muted">
+                <dt>Image</dt>
+                <dd className="font-mono">{runner.image}</dd>
+                <dt>Network</dt>
+                <dd>{runner.network === "bridge" ? "On (bridge)" : "Off"}</dd>
+              </dl>
+            ) : (
+              <p className="mt-1 text-muted">
+                Commands run directly on this Mac, as you. Containers are off.
+              </p>
+            )}
+            {runner.problem && (
+              <p role="alert" className="mt-3 text-danger">
+                {runner.problem}
+              </p>
+            )}
+          </>
+        )}
+        <p className="mt-3 text-faint">
+          To change this, edit <span className="font-mono">[tools.bash]</span> in your user config
+          file. A workspace's own config cannot change it.
+        </p>
+      </div>
+    </Block>
+  );
+}
+
 export function SettingsView({
   keyStatus,
+  runner,
   onRecheckKey,
   onForgotten,
 }: {
   keyStatus: KeyStatus | null;
+  runner: CommandRunnerInfo | null;
   onRecheckKey: () => Promise<void>;
   onForgotten: (opened: OpenedWorkspace | null) => void;
 }) {
@@ -285,6 +338,8 @@ export function SettingsView({
         </Block>
 
         <ApiKey status={keyStatus} onRecheck={onRecheckKey} />
+
+        <CommandExecution runner={runner} />
 
         <TrustedWorkspaces onForgotten={onForgotten} />
 

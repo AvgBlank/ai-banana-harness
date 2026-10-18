@@ -267,7 +267,11 @@ test("a folder chosen in main opens against the real sidecar and a turn streams 
   });
 
   expect(result.info.protocol).toBe(1);
-  expect(result.opened).toEqual({ workspace: stub.workspace, trust: "none" });
+  expect(result.opened).toEqual({
+    workspace: stub.workspace,
+    trust: "none",
+    commandRunner: { kind: "host", image: null, network: null, problem: null },
+  });
   const types = result.events.map((e) => e.event.type);
   expect(types[0]).toBe("turn.created");
   expect(types.at(-1)).toBe("turn.done");

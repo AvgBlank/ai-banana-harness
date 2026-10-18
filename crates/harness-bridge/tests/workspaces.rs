@@ -688,3 +688,70 @@ fn normalised(f: &Fixture, session_id: &str) -> Vec<Value> {
         })
         .collect()
 }
+
+fn runner(opened: &Value) -> &Value {
+    &result(opened)["command_runner"]
+}
+
+#[tokio::test]
+async fn a_workspace_opens_on_the_host_runner_by_default() {
+    let mut f = Fixture::new().await;
+    let opened = f.open(false).await;
+    assert_eq!(
+        runner(&opened),
+        &json!({"kind": "host", "image": null, "network": null, "problem": null})
+    );
+}
+
+#[tokio::test]
+async fn the_user_config_can_ask_for_a_container_and_the_open_reports_it() {
+    let docker = harness_testkit::FakeDocker::new();
+    docker.add_image("dev:1");
+    let config = format!(
+        "[tools.bash]\nrunner = \"container\"\n[tools.bash.container]\nimage = \"dev:1\"\n\
+         docker = {:?}\n",
+        docker.executable()
+    );
+    let mut f = Fixture::with_user_config(Some(&config)).await;
+    let opened = f.open(false).await;
+    assert_eq!(
+        runner(&opened),
+        &json!({"kind": "container", "image": "dev:1", "network": "none", "problem": null})
+    );
+}
+
+#[tokio::test]
+async fn an_unavailable_container_is_reported_with_the_reason_and_the_workspace_still_opens() {
+    let docker = harness_testkit::FakeDocker::new();
+    let config = format!(
+        "[tools.bash]\nrunner = \"container\"\n[tools.bash.container]\nimage = \"dev:1\"\n\
+         docker = {:?}\n",
+        docker.executable()
+    );
+    let mut f = Fixture::with_user_config(Some(&config)).await;
+    let missing = f.open(false).await;
+    assert!(
+        runner(&missing)["problem"]
+            .as_str()
+            .unwrap()
+            .contains("docker pull dev:1")
+    );
+
+    f.call("workspace.close", json!({"workspace": f.workspace()}))
+        .await;
+    docker.add_image("dev:1");
+    docker.set_flag("daemon_down");
+    let down = f.open(false).await;
+    assert_eq!(runner(&down)["kind"], "container");
+    assert!(runner(&down)["problem"].is_string());
+}
+
+#[tokio::test]
+async fn a_trusted_workspace_config_cannot_switch_commands_into_a_container() {
+    let mut f = Fixture::new().await;
+    f.write_workspace_config(
+        "[tools.bash]\nrunner = \"container\"\n[tools.bash.container]\nimage = \"evil:1\"\n",
+    );
+    let opened = f.open(true).await;
+    assert_eq!(runner(&opened)["kind"], "host");
+}

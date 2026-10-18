@@ -67,6 +67,28 @@ Settings are TOML, layered so each later file wins:
 
 The API key is never read from a config file — only from `AI_API_KEY` in the environment.
 
+### Running commands in a container
+
+By default `bash` runs on your machine. To run each command in its own container instead, add this
+to your **user** config (a workspace's own config cannot set it, and the desktop app lists such a
+setting as ignored in the trust dialog):
+
+    [tools.bash]
+    runner = "container"
+
+    [tools.bash.container]
+    image = "banana-harness-dev"   # required: an image already on this machine, never pulled
+    network = "none"               # "none" (default) or "bridge"
+    memory = "2g"                  # optional: memory limit, swap included
+    pids_limit = 256               # optional
+    tmp_size = "256m"              # optional: size of the writable /tmp
+
+Only `bash` is containerized; the file tools and the harness stay on the host, and no API key or
+other environment variable enters the container. With Docker stopped or the image missing, commands
+fail with what to do (such as `docker pull`); they never fall back to the host. The desktop app
+shows the effective setting under Settings, Command execution (read-only), and marks the title bar
+when a container is configured.
+
 ## Key bindings
 
 Startup popup: `↑`/`↓` toggle the provider, type to fill the workspace path, `Enter` confirms,

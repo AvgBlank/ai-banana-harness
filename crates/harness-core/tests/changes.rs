@@ -226,7 +226,6 @@ fn harness_at(workspace: &Path, db: &Path) -> Harness {
         api_key: TEST_API_KEY.to_string(),
         workspace: workspace.to_path_buf(),
         headless: false,
-        container: None,
     })
     .unwrap()
 }

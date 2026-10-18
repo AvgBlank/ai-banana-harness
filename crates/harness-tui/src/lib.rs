@@ -664,7 +664,6 @@ fn open_harness(
         api_key,
         workspace,
         headless: false,
-        container: None,
     })?;
     let session_id = harness.create_session()?;
     Ok((harness, session_id))

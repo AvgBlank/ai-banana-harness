@@ -21,6 +21,7 @@ function setup(
     activeTurn?: boolean;
     loaded?: boolean;
     openFails?: boolean;
+    runner?: Record<string, unknown>;
   } = {},
 ) {
   const store = new TrustStore(join(tempDir("flow-"), "trust.json"));
@@ -46,6 +47,12 @@ function setup(
           workspace: "/w",
           already_open: already,
           provider: "deepseek",
+          command_runner: options.runner ?? {
+            kind: "host",
+            image: null,
+            network: null,
+            problem: null,
+          },
           workspace_config: {
             present: options.present ?? true,
             loaded: trusted || (options.loaded ?? false),
@@ -97,21 +104,42 @@ const code = (promise: Promise<unknown>) =>
   );
 
 describe("opening", () => {
+  test("the sidecar's command runner reaches the app, on a restricted and on a trusted open", async () => {
+    const runner = { kind: "container", image: "dev:1", network: "none", problem: "no daemon" };
+    const expected = { kind: "container", image: "dev:1", network: "none", problem: "no daemon" };
+    const none = setup({ present: false, runner });
+    expect((await none.flow.open("/w")).commandRunner).toEqual(expected);
+    const trusted = setup({ loaded: true, runner });
+    expect((await trusted.flow.open("/w")).commandRunner).toEqual(expected);
+  });
+
   test("no config means nothing to trust, and nothing is read", async () => {
     const t = setup({ present: false });
-    expect(await t.flow.open("/w")).toEqual({ workspace: "/w", trust: "none" });
+    expect(await t.flow.open("/w")).toEqual({
+      workspace: "/w",
+      trust: "none",
+      commandRunner: { kind: "host", image: null, network: null, problem: null },
+    });
     expect(t.log).toEqual(["open:restricted"]);
   });
 
   test("a config nobody trusted stays restricted and asks for review", async () => {
     const t = setup();
-    expect(await t.flow.open("/w")).toEqual({ workspace: "/w", trust: "needs_review" });
+    expect(await t.flow.open("/w")).toEqual({
+      workspace: "/w",
+      trust: "needs_review",
+      commandRunner: { kind: "host", image: null, network: null, problem: null },
+    });
     expect(t.log).toEqual(["open:restricted"]);
   });
 
   test("an unreadable config stays restricted", async () => {
     const t = setup({ config: { ok: false, reason: "symlink" } });
-    expect(await t.flow.open("/w")).toEqual({ workspace: "/w", trust: "unreadable" });
+    expect(await t.flow.open("/w")).toEqual({
+      workspace: "/w",
+      trust: "unreadable",
+      commandRunner: { kind: "host", image: null, network: null, problem: null },
+    });
   });
 
   test("the same path and hash reopens trusted after checking destinations", async () => {
@@ -257,7 +285,11 @@ describe("forgetting", () => {
     });
     await t.flow.trust({ path: "/w", sha256: sha("a"), acknowledgeHosts: true });
     t.log.length = 0;
-    expect(await t.flow.forget("/w")).toEqual({ workspace: "/w", trust: "needs_review" });
+    expect(await t.flow.forget("/w")).toEqual({
+      workspace: "/w",
+      trust: "needs_review",
+      commandRunner: { kind: "host", image: null, network: null, problem: null },
+    });
     expect(await t.store.get("/w")).toBeNull();
     expect(t.log).toContain("workspace.close");
   });

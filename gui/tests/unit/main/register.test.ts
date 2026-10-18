@@ -41,6 +41,7 @@ function setup(options: { request?: (method: string, params: unknown) => unknown
         already_open: false,
         provider: "deepseek",
         workspace_config: { present: false, loaded: false, path: "p" },
+        command_runner: { kind: "host", image: null, network: null, problem: null },
       };
     }
     return {};
@@ -215,7 +216,11 @@ describe("workspaces", () => {
     });
     expect(await t.call(channels.workspaceOpen, { path: "/picked" })).toEqual({
       ok: true,
-      value: { workspace: "/picked", trust: "none" },
+      value: {
+        workspace: "/picked",
+        trust: "none",
+        commandRunner: { kind: "host", image: null, network: null, problem: null },
+      },
     });
     expect(t.request).toHaveBeenCalledWith("workspace.open", {
       path: "/picked",

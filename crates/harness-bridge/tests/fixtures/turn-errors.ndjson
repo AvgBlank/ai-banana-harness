@@ -1,6 +1,6 @@
 {"scenario":"turn-errors"}
 {"id":"c","kind":"request","method":"workspace.open","params":{"path":"<workspace>"}}
-{"id":"c","kind":"response","ok":true,"result":{"already_open":false,"provider":"deepseek","workspace":"<workspace>","workspace_config":{"loaded":false,"path":"<workspace>/.banana-harness/config.toml","present":false}}}
+{"id":"c","kind":"response","ok":true,"result":{"already_open":false,"command_runner":{"image":null,"kind":"host","network":null,"problem":null},"provider":"deepseek","workspace":"<workspace>","workspace_config":{"loaded":false,"path":"<workspace>/.banana-harness/config.toml","present":false}}}
 {"id":"c","kind":"request","method":"session.create","params":{"workspace":"<workspace>"}}
 {"id":"c","kind":"response","ok":true,"result":{"session":{"created_at":"<time>","id":"<id-0>","model":"deepseek-flash","provider":"deepseek","title":null,"updated_at":"<time>","workspace":"<workspace>"}}}
 {"id":"c","kind":"request","method":"turn.start","params":{"input":"slow one","session_id":"<id-0>","workspace":"<workspace>"}}

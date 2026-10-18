@@ -39,6 +39,13 @@ paths = [".banana-harness/skills", "~/.config/banana-harness/skills"]
 bash_timeout_secs = 120 # at most 600
 output_max_bytes = 30720
 
+# Commands run on the host unless the user config sets:
+#   [tools.bash]
+#   runner = "container"
+#   [tools.bash.container]
+#   image = "an-image-already-on-this-machine"   # network = "none" | "bridge" (default none)
+# A workspace config cannot set `tools.bash`.
+
 # Each key is "allow", "ask" or "deny", or a table of pattern = action where `*` matches
 # anything and the LAST matching pattern wins (patterns stay in the order written). Overlays
 # that repeat a pattern change it in place; new patterns are appended, so they win.

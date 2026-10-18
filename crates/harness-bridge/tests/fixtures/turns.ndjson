@@ -1,6 +1,6 @@
 {"scenario":"plain-answer"}
 {"id":"d1","kind":"request","method":"workspace.open","params":{"path":"<workspace>"}}
-{"id":"d1","kind":"response","ok":true,"result":{"already_open":false,"provider":"deepseek","workspace":"<workspace>","workspace_config":{"loaded":false,"path":"<workspace>/.banana-harness/config.toml","present":false}}}
+{"id":"d1","kind":"response","ok":true,"result":{"already_open":false,"command_runner":{"image":null,"kind":"host","network":null,"problem":null},"provider":"deepseek","workspace":"<workspace>","workspace_config":{"loaded":false,"path":"<workspace>/.banana-harness/config.toml","present":false}}}
 {"id":"d2","kind":"request","method":"session.create","params":{"workspace":"<workspace>"}}
 {"id":"d2","kind":"response","ok":true,"result":{"session":{"created_at":"<time>","id":"<id-0>","model":"deepseek-flash","provider":"deepseek","title":null,"updated_at":"<time>","workspace":"<workspace>"}}}
 {"id":"d3","kind":"request","method":"turn.start","params":{"input":"say hi","session_id":"<id-0>","workspace":"<workspace>"}}
@@ -13,7 +13,7 @@
 {"event":{"id":"<id-9>","state":"done","type":"turn.done"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
 {"scenario":"edit-and-approve"}
 {"id":"d1","kind":"request","method":"workspace.open","params":{"path":"<workspace>"}}
-{"id":"d1","kind":"response","ok":true,"result":{"already_open":false,"provider":"deepseek","workspace":"<workspace>","workspace_config":{"loaded":false,"path":"<workspace>/.banana-harness/config.toml","present":false}}}
+{"id":"d1","kind":"response","ok":true,"result":{"already_open":false,"command_runner":{"image":null,"kind":"host","network":null,"problem":null},"provider":"deepseek","workspace":"<workspace>","workspace_config":{"loaded":false,"path":"<workspace>/.banana-harness/config.toml","present":false}}}
 {"id":"d2","kind":"request","method":"session.create","params":{"workspace":"<workspace>"}}
 {"id":"d2","kind":"response","ok":true,"result":{"session":{"created_at":"<time>","id":"<id-0>","model":"deepseek-flash","provider":"deepseek","title":null,"updated_at":"<time>","workspace":"<workspace>"}}}
 {"id":"d3","kind":"request","method":"turn.start","params":{"input":"write a note and deploy it","session_id":"<id-0>","workspace":"<workspace>"}}
@@ -39,7 +39,7 @@
 {"event":{"id":"<id-22>","state":"done","type":"turn.done"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
 {"scenario":"question-and-answer"}
 {"id":"d1","kind":"request","method":"workspace.open","params":{"path":"<workspace>"}}
-{"id":"d1","kind":"response","ok":true,"result":{"already_open":false,"provider":"deepseek","workspace":"<workspace>","workspace_config":{"loaded":false,"path":"<workspace>/.banana-harness/config.toml","present":false}}}
+{"id":"d1","kind":"response","ok":true,"result":{"already_open":false,"command_runner":{"image":null,"kind":"host","network":null,"problem":null},"provider":"deepseek","workspace":"<workspace>","workspace_config":{"loaded":false,"path":"<workspace>/.banana-harness/config.toml","present":false}}}
 {"id":"d2","kind":"request","method":"session.create","params":{"workspace":"<workspace>"}}
 {"id":"d2","kind":"response","ok":true,"result":{"session":{"created_at":"<time>","id":"<id-0>","model":"deepseek-flash","provider":"deepseek","title":null,"updated_at":"<time>","workspace":"<workspace>"}}}
 {"id":"d3","kind":"request","method":"turn.start","params":{"input":"greet me","session_id":"<id-0>","workspace":"<workspace>"}}
@@ -58,7 +58,7 @@
 {"event":{"id":"<id-15>","state":"done","type":"turn.done"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
 {"scenario":"subagents"}
 {"id":"d1","kind":"request","method":"workspace.open","params":{"path":"<workspace>"}}
-{"id":"d1","kind":"response","ok":true,"result":{"already_open":false,"provider":"deepseek","workspace":"<workspace>","workspace_config":{"loaded":false,"path":"<workspace>/.banana-harness/config.toml","present":false}}}
+{"id":"d1","kind":"response","ok":true,"result":{"already_open":false,"command_runner":{"image":null,"kind":"host","network":null,"problem":null},"provider":"deepseek","workspace":"<workspace>","workspace_config":{"loaded":false,"path":"<workspace>/.banana-harness/config.toml","present":false}}}
 {"id":"d2","kind":"request","method":"session.create","params":{"workspace":"<workspace>"}}
 {"id":"d2","kind":"response","ok":true,"result":{"session":{"created_at":"<time>","id":"<id-0>","model":"deepseek-flash","provider":"deepseek","title":null,"updated_at":"<time>","workspace":"<workspace>"}}}
 {"id":"d3","kind":"request","method":"turn.start","params":{"input":"split the work","session_id":"<id-0>","workspace":"<workspace>"}}
@@ -86,7 +86,7 @@
 {"event":{"id":"<id-29>","state":"done","type":"turn.done"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
 {"scenario":"edit-and-undo"}
 {"id":"d1","kind":"request","method":"workspace.open","params":{"path":"<workspace>"}}
-{"id":"d1","kind":"response","ok":true,"result":{"already_open":false,"provider":"deepseek","workspace":"<workspace>","workspace_config":{"loaded":false,"path":"<workspace>/.banana-harness/config.toml","present":false}}}
+{"id":"d1","kind":"response","ok":true,"result":{"already_open":false,"command_runner":{"image":null,"kind":"host","network":null,"problem":null},"provider":"deepseek","workspace":"<workspace>","workspace_config":{"loaded":false,"path":"<workspace>/.banana-harness/config.toml","present":false}}}
 {"id":"d2","kind":"request","method":"session.create","params":{"workspace":"<workspace>"}}
 {"id":"d2","kind":"response","ok":true,"result":{"session":{"created_at":"<time>","id":"<id-0>","model":"deepseek-flash","provider":"deepseek","title":null,"updated_at":"<time>","workspace":"<workspace>"}}}
 {"id":"d3","kind":"request","method":"turn.start","params":{"input":"change the greeting","session_id":"<id-0>","workspace":"<workspace>"}}
@@ -107,7 +107,7 @@
 {"id":"d5","kind":"response","ok":true,"result":{"event":{"id":"<id-16>","turn_id":"<id-2>","type":"turn.undone"},"outcome":"restored"}}
 {"scenario":"single-subagent"}
 {"id":"d1","kind":"request","method":"workspace.open","params":{"path":"<workspace>"}}
-{"id":"d1","kind":"response","ok":true,"result":{"already_open":false,"provider":"deepseek","workspace":"<workspace>","workspace_config":{"loaded":false,"path":"<workspace>/.banana-harness/config.toml","present":false}}}
+{"id":"d1","kind":"response","ok":true,"result":{"already_open":false,"command_runner":{"image":null,"kind":"host","network":null,"problem":null},"provider":"deepseek","workspace":"<workspace>","workspace_config":{"loaded":false,"path":"<workspace>/.banana-harness/config.toml","present":false}}}
 {"id":"d2","kind":"request","method":"session.create","params":{"workspace":"<workspace>"}}
 {"id":"d2","kind":"response","ok":true,"result":{"session":{"created_at":"<time>","id":"<id-0>","model":"deepseek-flash","provider":"deepseek","title":null,"updated_at":"<time>","workspace":"<workspace>"}}}
 {"id":"d3","kind":"request","method":"turn.start","params":{"input":"say hi","session_id":"<id-0>","workspace":"<workspace>"}}
@@ -128,7 +128,7 @@
 {"event":{"id":"<id-20>","state":"done","type":"turn.done"},"kind":"event","session_id":"<id-0>","turn_id":"<id-2>","workspace":"<workspace>"}
 {"scenario":"compaction"}
 {"id":"d1","kind":"request","method":"workspace.open","params":{"path":"<workspace>"}}
-{"id":"d1","kind":"response","ok":true,"result":{"already_open":false,"provider":"deepseek","workspace":"<workspace>","workspace_config":{"loaded":false,"path":"<workspace>/.banana-harness/config.toml","present":false}}}
+{"id":"d1","kind":"response","ok":true,"result":{"already_open":false,"command_runner":{"image":null,"kind":"host","network":null,"problem":null},"provider":"deepseek","workspace":"<workspace>","workspace_config":{"loaded":false,"path":"<workspace>/.banana-harness/config.toml","present":false}}}
 {"id":"d2","kind":"request","method":"session.create","params":{"workspace":"<workspace>"}}
 {"id":"d2","kind":"response","ok":true,"result":{"session":{"created_at":"<time>","id":"<id-0>","model":"deepseek-flash","provider":"deepseek","title":null,"updated_at":"<time>","workspace":"<workspace>"}}}
 {"id":"d3","kind":"request","method":"turn.start","params":{"input":"say hi","session_id":"<id-0>","workspace":"<workspace>"}}

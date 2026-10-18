@@ -20,13 +20,13 @@ mod tools;
 
 pub use changes::{ChangeStatus, FileChange, TurnChanges, WorkspaceChanges};
 pub use config::{
-    AgentConfig, Config, ConfigPaths, Provider, ProviderConfig, ProviderOption, Providers,
-    SkillsConfig,
+    AgentConfig, CommandRunnerConfig, Config, ConfigPaths, Provider, ProviderConfig,
+    ProviderOption, Providers, SkillsConfig,
 };
 pub use event::{Event, EventKind, ModelOutput, TurnState};
 pub use harness::{
-    Answer, Harness, HarnessOptions, LAST_PROVIDER_SETTING, Redactor, TurnHandle, TurnRecord,
-    UndoOutcome, UndoReport, last_provider,
+    Answer, CommandRunnerStatus, ContainerSummary, Harness, HarnessOptions, LAST_PROVIDER_SETTING,
+    Redactor, TurnHandle, TurnRecord, UndoOutcome, UndoReport, last_provider,
 };
 pub use harness_llm::Usage;
 pub use harness_mcp::{McpServerConfig, McpTransport};

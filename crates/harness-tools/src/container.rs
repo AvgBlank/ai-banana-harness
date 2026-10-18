@@ -98,6 +98,18 @@ impl ContainerRunner {
         Self { config }
     }
 
+    /// Whether a command could start now: the `docker` client answers and the image is here. The
+    /// error says what to do about it, as a failed command would.
+    pub fn check(&self) -> io::Result<()> {
+        let image = &self.config.image;
+        let probe = self.docker(&["image", "inspect", "--format", "{{.Id}}", image], QUICK)?;
+        if probe.ok {
+            Ok(())
+        } else {
+            Err(self.explain("image inspect", &probe.stderr, None))
+        }
+    }
+
     /// Removes containers an earlier sidecar left behind (it was killed outright, which gives it
     /// no chance to clean up). Only containers carrying [`COMMAND_LABEL`] whose owner process
     /// ([`OWNER_LABEL`]) no longer runs are touched, so a command in progress is never swept.
@@ -396,11 +408,7 @@ impl CommandRunner for ContainerRunner {
         }
 
         // The image must already be here; this never pulls.
-        let image = &self.config.image;
-        let probe = self.docker(&["image", "inspect", "--format", "{{.Id}}", image], QUICK)?;
-        if !probe.ok {
-            return Err(self.explain("image inspect", &probe.stderr, None));
-        }
+        self.check()?;
         if request.cancel.is_cancelled() {
             return Ok(cancelled(String::new()));
         }

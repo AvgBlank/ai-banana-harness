@@ -153,7 +153,6 @@ pub async fn create_session(db_path: &Path, base: &Path, workspace_name: &str) -
         api_key: API_KEY.to_string(),
         workspace,
         headless: false,
-        container: None,
     })
     .unwrap();
     harness.create_session().unwrap()

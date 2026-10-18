@@ -175,6 +175,16 @@ export function TrustDialog({
                 ))}
               </Section>
 
+              {summary.ignored.length > 0 && (
+                <Section title="Ignored: only your own config can set where commands run">
+                  {summary.ignored.map((key) => (
+                    <Row key={key}>
+                      <span className="font-mono">{key}</span>
+                    </Row>
+                  ))}
+                </Section>
+              )}
+
               {summary.other.length > 0 && (
                 <Section title="Other overrides">
                   {summary.other.map((name) => (

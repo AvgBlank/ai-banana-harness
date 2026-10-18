@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use harness_core::{Answer, Provider, Redactor, Store};
+use harness_core::{Answer, CommandRunnerStatus, ContainerNetwork, Provider, Redactor, Store};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
@@ -281,6 +281,13 @@ async fn open(context: &Context, p: OpenParams) -> Result<Value, BridgeError> {
             },
         )
         .await?;
+    // Asked on every open, so a Docker that was started since shows as working. A host runner
+    // asks nothing; a container runner makes one bounded call to the `docker` client.
+    let status = blocking({
+        let workspace = Arc::clone(&workspace);
+        move || Ok(workspace.harness.command_runner_status())
+    })
+    .await?;
     Ok(json!({
         "workspace": workspace.path,
         "already_open": already_open,
@@ -290,7 +297,25 @@ async fn open(context: &Context, p: OpenParams) -> Result<Value, BridgeError> {
             "loaded": workspace.config_loaded,
             "path": workspace.config_path,
         },
+        "command_runner": command_runner_json(&status),
     }))
+}
+
+/// What the app is told about where commands run: no paths, no environment, nothing but the
+/// choice, the image, the network setting and why it cannot work now.
+fn command_runner_json(status: &CommandRunnerStatus) -> Value {
+    match &status.container {
+        None => json!({"kind": "host", "image": null, "network": null, "problem": null}),
+        Some(container) => json!({
+            "kind": "container",
+            "image": container.image,
+            "network": match container.network {
+                ContainerNetwork::None => "none",
+                ContainerNetwork::Bridge => "bridge",
+            },
+            "problem": status.problem,
+        }),
+    }
 }
 
 async fn create(context: &Context, p: CreateParams) -> Result<Value, BridgeError> {

@@ -1,5 +1,5 @@
 {"id":"c","kind":"request","method":"workspace.open","params":{"path":"<workspace>","trust_workspace_config":false}}
-{"id":"c","kind":"response","ok":true,"result":{"already_open":false,"provider":"deepseek","workspace":"<workspace>","workspace_config":{"loaded":false,"path":"<workspace>/.banana-harness/config.toml","present":true}}}
+{"id":"c","kind":"response","ok":true,"result":{"already_open":false,"command_runner":{"image":null,"kind":"host","network":null,"problem":null},"provider":"deepseek","workspace":"<workspace>","workspace_config":{"loaded":false,"path":"<workspace>/.banana-harness/config.toml","present":true}}}
 {"id":"c","kind":"request","method":"workspace.list","params":{}}
 {"id":"c","kind":"response","ok":true,"result":{"workspaces":[{"active_turn":null,"provider":"deepseek","workspace":"<workspace>"}]}}
 {"id":"c","kind":"request","method":"provider.list","params":{"workspace":"<workspace>"}}
@@ -19,7 +19,7 @@
 {"id":"c","kind":"request","method":"workspace.close","params":{"workspace":"<workspace>"}}
 {"id":"c","kind":"response","ok":true,"result":{}}
 {"id":"c","kind":"request","method":"workspace.open","params":{"path":"<workspace>","trust_workspace_config":true}}
-{"id":"c","kind":"response","ok":true,"result":{"already_open":false,"provider":"qwen","workspace":"<workspace>","workspace_config":{"loaded":true,"path":"<workspace>/.banana-harness/config.toml","present":true}}}
+{"id":"c","kind":"response","ok":true,"result":{"already_open":false,"command_runner":{"image":null,"kind":"host","network":null,"problem":null},"provider":"qwen","workspace":"<workspace>","workspace_config":{"loaded":true,"path":"<workspace>/.banana-harness/config.toml","present":true}}}
 {"id":"c","kind":"request","method":"provider.list","params":{"workspace":"<workspace>"}}
 {"id":"c","kind":"response","ok":true,"result":{"default":"qwen","providers":[{"host":"127.0.0.1:4242","model":"deepseek-flash","provider":"deepseek","scheme":"http"},{"host":"dashscope.aliyuncs.com","model":"qwen3.8-flash","provider":"qwen","scheme":"https"}]}}
 {"id":"c","kind":"request","method":"workspace.close","params":{"workspace":"<workspace>"}}

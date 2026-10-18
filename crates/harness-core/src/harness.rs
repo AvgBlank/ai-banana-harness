@@ -15,7 +15,7 @@ use harness_store::{
     FinishTurn, NewCheckpoint, NewEvent, NewSession, NewTurn, Session, Store, UpsertThread,
 };
 use harness_tools::{
-    AskOverrides, AskRequest, CommandRunner, ContainerConfig, ContainerRunner, HostRunner,
+    AskOverrides, AskRequest, CommandRunner, ContainerNetwork, ContainerRunner, HostRunner,
     ToolResult,
 };
 use serde::{Deserialize, Serialize};
@@ -28,7 +28,7 @@ use crate::builtins::{Builtin, MAX_PARALLEL_SUB_AGENTS, QuestionRequest, SubAgen
 use crate::changes::{self, TurnChanges, WorkspaceChanges};
 use crate::checkpoint;
 use crate::compaction;
-use crate::config::{Config, Provider, ProviderOption};
+use crate::config::{CommandRunnerConfig, Config, Provider, ProviderOption};
 use crate::event::{Event, EventKind, ModelOutput, TurnState};
 use crate::instructions::{SystemPromptInput, system_prompt};
 use crate::mcp::{McpAuthNotifier, McpRegistry, McpServerStatus};
@@ -87,10 +87,23 @@ pub struct HarnessOptions {
     /// A headless run has no one to answer a required action: questions are auto-answered and
     /// `ask` rules resolve to deny, both without waiting.
     pub headless: bool,
-    /// Run `bash` commands in a container per command instead of on the host. `None` (the
-    /// default everywhere) runs them on the host. Opening with `Some` first removes containers
-    /// an earlier, killed sidecar left behind.
-    pub container: Option<ContainerConfig>,
+}
+
+/// Where commands run, as the app shows it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommandRunnerStatus {
+    /// `None`: commands run on the host.
+    pub container: Option<ContainerSummary>,
+    /// Why a container cannot run a command now (Docker missing or stopped, image missing), in
+    /// words that say what to do; `None` when it can.
+    pub problem: Option<String>,
+}
+
+/// What a container is run with, as far as the app shows it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContainerSummary {
+    pub image: String,
+    pub network: ContainerNetwork,
 }
 
 /// The in-process agent harness. Both surfaces drive it only through `start_turn` and the handle.
@@ -196,14 +209,16 @@ impl Harness {
             seed: provider_config.seed,
             max_tokens: provider_config.max_output,
         })?;
-        let runner: Arc<dyn CommandRunner> = match options.container {
-            Some(config) => {
-                let runner = ContainerRunner::new(config);
+        // Where commands run is in the config (the user's choice). A container runner first
+        // removes containers an earlier, killed sidecar left behind.
+        let runner: Arc<dyn CommandRunner> = match &options.config.command_runner {
+            CommandRunnerConfig::Container(config) => {
+                let runner = ContainerRunner::new(config.clone());
                 // Best effort: if Docker is down the first command says so.
                 let _ = runner.sweep_leftovers();
                 Arc::new(runner)
             }
-            None => Arc::new(HostRunner),
+            CommandRunnerConfig::Host => Arc::new(HostRunner),
         };
         let store = Arc::new(options.store);
         let mcp = McpRegistry::new(
@@ -228,6 +243,27 @@ impl Harness {
                 headless: options.headless,
             }),
         })
+    }
+
+    /// Where this harness runs `bash` commands and whether that works right now. For a container
+    /// this asks the `docker` client (a bounded call); for the host it asks nothing.
+    pub fn command_runner_status(&self) -> CommandRunnerStatus {
+        match &self.inner.config.command_runner {
+            CommandRunnerConfig::Host => CommandRunnerStatus {
+                container: None,
+                problem: None,
+            },
+            CommandRunnerConfig::Container(config) => CommandRunnerStatus {
+                container: Some(ContainerSummary {
+                    image: config.image.clone(),
+                    network: config.network,
+                }),
+                problem: ContainerRunner::new(config.clone())
+                    .check()
+                    .err()
+                    .map(|error| error.to_string()),
+            },
+        }
     }
 
     /// Records a new session for the harness's workspace and provider and returns its id.

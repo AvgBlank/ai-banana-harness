@@ -1,14 +1,16 @@
-import { ArrowLeft, ArrowRight, FileDiff, PanelLeft } from "lucide-react";
+import { ArrowLeft, ArrowRight, Box, FileDiff, PanelLeft } from "lucide-react";
 import { RestrictedChip } from "@/components/banners/RestrictedChip";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { folderName } from "@/lib/format";
 import { useApp } from "@/state/store";
+import type { CommandRunnerInfo } from "../../../shared/api";
 
 export function TitleBar({
   sessionTitle,
   totals,
   restricted,
+  runner,
   onReviewTrust,
 }: {
   sessionTitle: string | null;
@@ -16,6 +18,8 @@ export function TitleBar({
   totals: { added: number; removed: number } | null;
   /** The workspace has a config that is not trusted, so it runs restricted. */
   restricted: boolean;
+  /** How this workspace runs commands; only a container is worth a chip. */
+  runner: CommandRunnerInfo | null;
   onReviewTrust: () => void;
 }) {
   const { state, set } = useApp();
@@ -65,6 +69,24 @@ export function TitleBar({
 
       <div className="no-drag ml-auto flex items-center gap-1">
         {restricted && <RestrictedChip onReview={onReviewTrust} />}
+        {runner?.kind === "container" && (
+          <Tooltip
+            label={
+              runner.problem
+                ? `Commands are set to run in a container, but: ${runner.problem}`
+                : `Commands run in a container (${runner.image}).`
+            }
+          >
+            <span
+              className={`flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11.5px] ${
+                runner.problem ? "border-danger/50 text-danger" : "border-line text-muted"
+              }`}
+            >
+              <Box size={12} />
+              {runner.problem ? "Container unavailable" : "Container"}
+            </span>
+          </Tooltip>
+        )}
         <Tooltip label={state.changesOpen ? "Hide changes" : "Show changes"}>
           <Button
             variant={state.changesOpen ? "secondary" : "ghost"}

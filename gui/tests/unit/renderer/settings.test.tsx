@@ -34,6 +34,7 @@ describe("settings", () => {
     expect(headings).toEqual([
       "Appearance",
       "API key",
+      "Command execution",
       "Trusted workspaces",
       "Keyboard shortcuts",
       "About",

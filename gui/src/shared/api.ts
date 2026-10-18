@@ -69,10 +69,22 @@ export interface AppInfo {
  */
 export type TrustState = "none" | "trusted" | "needs_review" | "unreadable";
 
+/**
+ * Where a workspace's `bash` commands run. `problem` says why a container cannot run a command
+ * now (Docker missing or stopped, image missing) and what to do; it is `null` when it can.
+ */
+export interface CommandRunnerInfo {
+  kind: "host" | "container";
+  image: string | null;
+  network: "none" | "bridge" | null;
+  problem: string | null;
+}
+
 /** The result of opening a workspace: restricted until the trust flow upgrades it. */
 export interface OpenedWorkspace {
   workspace: string;
   trust: TrustState;
+  commandRunner: CommandRunnerInfo;
 }
 
 /** An advisory reading of a workspace config for the trust dialog. */
@@ -98,6 +110,8 @@ export interface TrustSummary {
   }>;
   /** Overrides of the agent's instructions, tools or skill paths. */
   other: string[];
+  /** Settings only the user's own config can make (where commands run); the workspace's are ignored. */
+  ignored: string[];
 }
 
 /** Everything the trust dialog shows, read by main from the file itself. */

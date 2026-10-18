@@ -2,6 +2,7 @@ import { type Mocked, vi } from "vitest";
 import type { Client } from "../../../src/renderer/lib/client";
 import type { FileChange } from "../../../src/renderer/state/changes";
 import type {
+  CommandRunnerInfo,
   KeyStatus,
   LiveAttach,
   Prefs,
@@ -12,6 +13,13 @@ import type {
   TrustState,
 } from "../../../src/shared/api";
 import type { EventFrame, ProviderOption, Session } from "../../../src/shared/protocol";
+
+export const HOST_RUNNER: CommandRunnerInfo = {
+  kind: "host",
+  image: null,
+  network: null,
+  problem: null,
+};
 
 export function session(over: Partial<Session> & Pick<Session, "id" | "workspace">): Session {
   return {
@@ -55,6 +63,7 @@ export function reviewOf(workspace: string, over: Partial<TrustReview> = {}): Tr
       ],
       permissions: [{ tool: "bash", pattern: "sudo *", action: "allow", risky: true }],
       providers: [],
+      ignored: [],
       other: ["agent.instructions"],
     },
     baseline: [{ provider: "deepseek", origin: "https://api.deepseek.com" }],
@@ -110,6 +119,7 @@ export function fakeClient(
     workspaceFiles?: FileChange[];
     /** The trust state `workspace.open` reports, by path (`none` otherwise). */
     trust?: Record<string, TrustState>;
+    runners?: Record<string, CommandRunnerInfo>;
     review?: TrustReview;
     trusted?: TrustedWorkspace[];
   } = {},
@@ -159,16 +169,19 @@ export function fakeClient(
     openWorkspace: vi.fn(async (path: string) => ({
       workspace: path,
       trust: options.trust?.[path] ?? ("none" as const),
+      commandRunner: options.runners?.[path] ?? HOST_RUNNER,
     })),
     reviewTrust: vi.fn(async (path: string) => options.review ?? reviewOf(path)),
     trustWorkspace: vi.fn(async (request: { path: string }) => ({
       workspace: request.path,
       trust: "trusted" as const,
+      commandRunner: options.runners?.[request.path] ?? HOST_RUNNER,
     })),
     trustedWorkspaces: vi.fn(async () => options.trusted ?? []),
     forgetTrust: vi.fn(async (path: string) => ({
       workspace: path,
       trust: "needs_review" as const,
+      commandRunner: options.runners?.[path] ?? HOST_RUNNER,
     })),
     onSidecarState: vi.fn((listener: (status: SidecarState) => void) => {
       listeners.add(listener);

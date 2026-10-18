@@ -5,6 +5,7 @@ use std::str::FromStr;
 
 use anyhow::{Context, Result, anyhow, bail};
 use harness_mcp::McpServerConfig;
+use harness_tools::{ContainerConfig, ContainerNetwork};
 use serde::{Deserialize, Serialize};
 
 const DEFAULT_CONFIG: &str = include_str!("../../../config/default.toml");
@@ -19,6 +20,114 @@ pub struct Config {
     /// `[mcp.<name>]` servers, keyed by name.
     #[serde(default)]
     pub mcp: BTreeMap<String, McpServerConfig>,
+    /// Where `bash` commands run (`[tools.bash]`): read from the embedded defaults and the user
+    /// config only, never from a workspace config. Not part of the serde shape of [`Config`].
+    #[serde(skip)]
+    pub command_runner: CommandRunnerConfig,
+}
+
+/// Where `bash` commands run. The host unless the user config asks for a container.
+#[derive(Clone, Debug, Default)]
+pub enum CommandRunnerConfig {
+    #[default]
+    Host,
+    Container(ContainerConfig),
+}
+
+/// `[tools.bash]`: `runner = "host" | "container"` and, for a container, `[tools.bash.container]`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BashSettings {
+    #[serde(default)]
+    runner: RunnerKind,
+    container: Option<ContainerSettings>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum RunnerKind {
+    #[default]
+    Host,
+    Container,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContainerSettings {
+    image: Option<String>,
+    network: Option<String>,
+    memory: Option<String>,
+    pids_limit: Option<u32>,
+    tmp_size: Option<String>,
+    docker: Option<String>,
+}
+
+impl BashSettings {
+    fn into_config(self) -> Result<CommandRunnerConfig> {
+        let RunnerKind::Container = self.runner else {
+            return Ok(CommandRunnerConfig::Host);
+        };
+        let settings = self.container.ok_or_else(|| {
+            anyhow!(
+                "[tools.bash] runner = \"container\" needs a [tools.bash.container] table with \
+                 `image`, an image already on this machine (Banana Harness never pulls one)"
+            )
+        })?;
+        let image = settings
+            .image
+            .filter(|image| !image.trim().is_empty())
+            .ok_or_else(|| {
+                anyhow!(
+                    "[tools.bash.container] needs `image`, an image already on this machine \
+                     (Banana Harness never pulls one)"
+                )
+            })?;
+        let mut container = ContainerConfig::new(image);
+        match settings.network.as_deref() {
+            None | Some("none") => container.network = ContainerNetwork::None,
+            Some("bridge") => container.network = ContainerNetwork::Bridge,
+            Some(other) => bail!(
+                "[tools.bash.container] network = \"{other}\" is not valid: use \"none\" (the \
+                 default) or \"bridge\""
+            ),
+        }
+        if let Some(memory) = settings.memory {
+            container.memory = docker_size("memory", memory)?;
+        }
+        if let Some(size) = settings.tmp_size {
+            container.tmp_size = docker_size("tmp_size", size)?;
+        }
+        if let Some(limit) = settings.pids_limit {
+            if limit == 0 {
+                bail!("[tools.bash.container] pids_limit must be at least 1");
+            }
+            container.pids_limit = limit;
+        }
+        if let Some(docker) = settings.docker {
+            if docker.trim().is_empty() {
+                bail!("[tools.bash.container] docker must name the docker command");
+            }
+            container.docker = docker.into();
+        }
+        Ok(CommandRunnerConfig::Container(container))
+    }
+}
+
+/// A size in Docker's notation: a positive number with an optional `b`, `k`, `m` or `g`.
+fn docker_size(key: &str, value: String) -> Result<String> {
+    let digits = value.trim_end_matches(|c: char| "bBkKmMgG".contains(c));
+    let unit_len = value.len() - digits.len();
+    let valid = unit_len <= 1
+        && !digits.is_empty()
+        && digits.chars().all(|c| c.is_ascii_digit())
+        && digits.parse::<u64>().is_ok_and(|n| n > 0);
+    if valid {
+        Ok(value)
+    } else {
+        bail!(
+            "[tools.bash.container] {key} = \"{value}\" is not a size: use a number with an optional b, k, m or g, such as \"2g\""
+        )
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -74,17 +183,36 @@ impl Config {
     pub fn load(paths: ConfigPaths<'_>) -> Result<Self> {
         let mut merged: toml::Value =
             toml::from_str(DEFAULT_CONFIG).context("parsing the embedded default config")?;
-        for path in [paths.user, paths.workspace].into_iter().flatten() {
+        for (path, is_workspace) in [(paths.user, false), (paths.workspace, true)]
+            .into_iter()
+            .filter_map(|(path, is_workspace)| path.map(|p| (p, is_workspace)))
+        {
             if !path.is_file() {
                 continue;
             }
             let text = std::fs::read_to_string(path)
                 .with_context(|| format!("reading config {}", path.display()))?;
-            let overlay: toml::Value = toml::from_str(&text)
+            let mut overlay: toml::Value = toml::from_str(&text)
                 .with_context(|| format!("parsing config {}", path.display()))?;
+            if is_workspace {
+                // Where commands run is the user's choice: a workspace cannot pick or loosen it.
+                if let Some(tools) = overlay.get_mut("tools").and_then(toml::Value::as_table_mut) {
+                    tools.remove("bash");
+                }
+            }
             merge_toml(&mut merged, overlay);
         }
-        merged.try_into().context("validating the merged config")
+        let command_runner = match merged.get("tools").and_then(|tools| tools.get("bash")) {
+            Some(bash) => bash
+                .clone()
+                .try_into::<BashSettings>()
+                .context("reading [tools.bash]")?
+                .into_config()?,
+            None => CommandRunnerConfig::Host,
+        };
+        let mut config: Self = merged.try_into().context("validating the merged config")?;
+        config.command_runner = command_runner;
+        Ok(config)
     }
 
     pub fn provider(&self, provider: Provider) -> &ProviderConfig {

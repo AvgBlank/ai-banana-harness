@@ -17,7 +17,14 @@ import { useClient } from "@/state/client-context";
 import { useSessions } from "@/state/sessions";
 import { StateProvider, useApp } from "@/state/store";
 import { pendingOf, useTranscripts } from "@/state/transcripts";
-import type { KeyStatus, OpenedWorkspace, Prefs, SidecarState, TrustState } from "../shared/api";
+import type {
+  CommandRunnerInfo,
+  KeyStatus,
+  OpenedWorkspace,
+  Prefs,
+  SidecarState,
+  TrustState,
+} from "../shared/api";
 import type { Session } from "../shared/protocol";
 
 const NARROW = "(max-width: 1279px)";
@@ -73,6 +80,7 @@ function Shell({ prefs }: { prefs: Prefs }) {
   const [key, setKey] = useState<KeyStatus | null>(null);
   const [sidecar, setSidecar] = useState<SidecarState>({ state: "starting" });
   const [trust, setTrust] = useState<Record<string, TrustState>>({});
+  const [runners, setRunners] = useState<Record<string, CommandRunnerInfo>>({});
   const trustRef = useRef(trust);
   trustRef.current = trust;
   const [notice, setNotice] = useState<string | null>(null);
@@ -86,6 +94,7 @@ function Shell({ prefs }: { prefs: Prefs }) {
 
   const track = useCallback((opened: OpenedWorkspace) => {
     setTrust((before) => ({ ...before, [opened.workspace]: opened.trust }));
+    setRunners((before) => ({ ...before, [opened.workspace]: opened.commandRunner }));
   }, []);
   // A workspace main refused to open (its config would move the API key) is told, not hidden.
   const reportRefusal = useCallback((error: unknown) => {
@@ -422,6 +431,7 @@ function Shell({ prefs }: { prefs: Prefs }) {
         sessionTitle={session ? (session.title ?? "Untitled session") : null}
         totals={changesShown || session ? totals(scopeEntry.files) : null}
         restricted={restricted}
+        runner={currentWorkspace ? (runners[currentWorkspace] ?? null) : null}
         onReviewTrust={() => currentWorkspace && void startReview(currentWorkspace)}
       />
       <CrashBanner
@@ -461,6 +471,7 @@ function Shell({ prefs }: { prefs: Prefs }) {
           {state.view === "settings" ? (
             <SettingsView
               keyStatus={key}
+              runner={currentWorkspace ? (runners[currentWorkspace] ?? null) : null}
               onRecheckKey={recheckKey}
               onForgotten={(opened) => opened && track(opened)}
             />

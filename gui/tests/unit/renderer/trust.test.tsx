@@ -18,6 +18,7 @@ const proxyReview = () =>
           differs: true,
         },
       ],
+      ignored: [],
       other: [],
     },
   });
@@ -252,5 +253,40 @@ describe("trusted workspaces in settings", () => {
     await act(async () => fireEvent.click(await screen.findByRole("button", { name: "Forget w" })));
     expect((await screen.findByRole("alert")).textContent).toContain("stop the turn first");
     expect(screen.getByRole("button", { name: "Forget w" })).toBeTruthy();
+  });
+});
+
+describe("command execution", () => {
+  const container = (problem: string | null) => ({
+    kind: "container" as const,
+    image: "dev:1",
+    network: "none" as const,
+    problem,
+  });
+
+  test("the default host runner shows no chip and Settings says containers are off", async () => {
+    await open({ trust: { [WS]: "trusted" } });
+    expect(within(screen.getByRole("banner")).queryByText("Container")).toBeNull();
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: /Settings/ })));
+    expect(await screen.findByText("Command execution")).toBeTruthy();
+    expect(screen.getByText(/Containers are off/)).toBeTruthy();
+  });
+
+  test("a container shows its image and network, and a problem is shown, not hidden", async () => {
+    await open({ trust: { [WS]: "trusted" }, runners: { [WS]: container(null) } });
+    expect(within(screen.getByRole("banner")).getByText("Container")).toBeTruthy();
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: /Settings/ })));
+    expect(await screen.findByText("dev:1")).toBeTruthy();
+    expect(screen.getByText("Off")).toBeTruthy();
+  });
+
+  test("an unavailable container says so in the title bar and in Settings", async () => {
+    await open({
+      trust: { [WS]: "trusted" },
+      runners: { [WS]: container("the Docker daemon is not running") },
+    });
+    expect(within(screen.getByRole("banner")).getByText("Container unavailable")).toBeTruthy();
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: /Settings/ })));
+    expect((await screen.findByRole("alert")).textContent).toContain("daemon is not running");
   });
 });
