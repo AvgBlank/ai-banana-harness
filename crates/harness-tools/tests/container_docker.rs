@@ -93,11 +93,12 @@ fn output_exit_codes_and_the_working_directory() {
     .unwrap();
     assert_eq!(done.finish, Finish::Exited(3));
     let expected = dir.path().to_str().unwrap();
-    assert_eq!(
-        done.output,
-        format!("{expected}\nout\nerr\n"),
-        "mounted at its own path"
-    );
+    // Docker carries stdout and stderr separately, so only each stream's own order is kept.
+    let lines: Vec<&str> = done.output.lines().collect();
+    let stdout: Vec<&str> = lines.iter().copied().filter(|l| *l != "err").collect();
+    let stderr: Vec<&str> = lines.iter().copied().filter(|l| *l == "err").collect();
+    assert_eq!(stdout, [expected, "out"], "mounted at its own path");
+    assert_eq!(stderr, ["err"], "{}", done.output);
     assert!(leftovers().is_empty());
 }
 
